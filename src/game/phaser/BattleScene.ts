@@ -629,9 +629,14 @@ export class BattleScene extends Phaser.Scene {
       return;
     }
 
+    const localPlayer = this.session.state.sim.players[this.session.localPlayerId];
+    if (!localPlayer) {
+      return;
+    }
+
     const buildingConfig = getBuildingConfig(
       this.session.config,
-      this.session.state.sim.players.player.factionId,
+      localPlayer.factionId,
       preview.buildingTypeId,
     );
     const tileSize = this.session.config.tileSize;
