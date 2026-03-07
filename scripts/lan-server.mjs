@@ -129,6 +129,7 @@ wss.on('connection', (socket) => {
         sendJson(client.socket, {
           type: 'start',
           teamCount: room.teamCount,
+          playerId: client.playerId,
         });
       });
       return;

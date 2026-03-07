@@ -403,16 +403,19 @@ function handleLanServerMessage(raw: unknown) {
   if (message.type === 'assigned') {
     const assignedId = typeof message.playerId === 'string' ? message.playerId : localPlayerId;
     localPlayerId = assignedId;
+    setLanStatus(`room ${lanRoomId} | assigned as ${assignedId}`);
     return;
   }
 
   if (message.type === 'start') {
+    const startPlayerId = typeof message.playerId === 'string' ? message.playerId : localPlayerId;
+    localPlayerId = startPlayerId;
     const nextTeamCount = Number(message.teamCount ?? lanTeamCount);
     lanTeamCount = Math.max(2, Math.min(4, Number.isFinite(nextTeamCount) ? nextTeamCount : 2));
     currentConfig = createLanMatchConfig(lanTeamCount);
     mountBattle({
       config: currentConfig,
-      localPlayerId,
+      localPlayerId: startPlayerId,
       authoritative: lanHostMode,
       onCommandIssued: (command) => {
         sendLanMessage({ type: 'input', command });
