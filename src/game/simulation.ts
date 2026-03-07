@@ -741,11 +741,26 @@ function updateWorkerOrder(sim: SimulationState, config: GameConfig, unit: UnitS
       return;
     }
 
-    sim.players[unit.ownerId].resources += unit.cargo;
+    sim.players[unit.ownerId].pendingIncome += unit.cargo;
     unit.cargo = 0;
     unit.order.kind = 'harvest';
     unit.order.path = [];
   }
+}
+
+function payoutIncome(sim: SimulationState, config: GameConfig) {
+  if (sim.tick % config.tickRate !== 0) {
+    return;
+  }
+
+  (Object.keys(sim.players) as PlayerId[]).forEach((playerId) => {
+    const player = sim.players[playerId];
+    player.incomePerSecond = player.pendingIncome;
+    if (player.pendingIncome > 0) {
+      player.resources += player.pendingIncome;
+      player.pendingIncome = 0;
+    }
+  });
 }
 
 function updateUnitCombat(sim: SimulationState, config: GameConfig, unit: UnitState) {
@@ -1151,6 +1166,8 @@ export function stepSimulation(
       updateBuildingCombat(state.sim, config, building);
     });
 
+    payoutIncome(state.sim, config);
+
     cleanupDestroyed(state.sim);
 
     if (state.sim.tick % config.ai.thinkInterval === 0) {
@@ -1181,6 +1198,8 @@ export function createInitialGameState(config: GameConfig = defaultGameConfig): 
         id: 'player',
         factionId: 'aurora',
         resources: config.factions.aurora.startResources,
+        pendingIncome: 0,
+        incomePerSecond: 0,
         defeated: false,
         lastAttackTick: -999,
       },
@@ -1188,6 +1207,8 @@ export function createInitialGameState(config: GameConfig = defaultGameConfig): 
         id: 'enemy',
         factionId: 'obsidian',
         resources: config.factions.obsidian.startResources,
+        pendingIncome: 0,
+        incomePerSecond: 0,
         defeated: false,
         lastAttackTick: -999,
       },

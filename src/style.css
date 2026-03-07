@@ -315,6 +315,13 @@ p {
   background: rgba(15, 27, 39, 0.72);
 }
 
+.economy-meta {
+  font-size: 0.82rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #7dd3a7;
+}
+
 /* Production queue */
 .queue-item {
   display: grid;

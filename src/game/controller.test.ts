@@ -32,4 +32,14 @@ describe('controller', () => {
     expect(model.selectionCombatDetail).toContain('Reload 4');
     expect(model.selectionCombatDetail).toContain('Range');
   });
+
+  it('exposes income per second in the HUD model', () => {
+    const session = new BattleSession(defaultGameConfig);
+
+    session.state.sim.players.player.incomePerSecond = 42;
+
+    const model = session.getHudModel();
+
+    expect(model.incomePerSecond).toBe(42);
+  });
 });

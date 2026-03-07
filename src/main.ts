@@ -25,6 +25,7 @@ app.innerHTML = `
         <section>
           <p class="panel-label">Economy</p>
           <h2 id="resource-count">0</h2>
+          <p id="income-rate" class="economy-meta">+0 credits / sec</p>
           <p id="status-line">Initializing battlefield...</p>
         </section>
         <section>
@@ -100,6 +101,7 @@ const pauseButton = document.querySelector<HTMLButtonElement>('#pause-button')!;
 const menuOverlay = document.querySelector<HTMLDivElement>('#menu-overlay')!;
 const endOverlay = document.querySelector<HTMLDivElement>('#end-overlay')!;
 const resourceCount = document.querySelector<HTMLHeadingElement>('#resource-count')!;
+const incomeRate = document.querySelector<HTMLParagraphElement>('#income-rate')!;
 const selectionTitle = document.querySelector<HTMLHeadingElement>('#selection-title')!;
 const selectionDetail = document.querySelector<HTMLParagraphElement>('#selection-detail')!;
 const selectionTarget = document.querySelector<HTMLParagraphElement>('#selection-target')!;
@@ -301,6 +303,7 @@ function renderHud() {
   const model = session.getHudModel();
   const tickRate = session.config.tickRate;
   resourceCount.textContent = `${model.resources} credits`;
+  incomeRate.textContent = `+${model.incomePerSecond} credits / sec`;
   selectionTitle.textContent = model.selectionTitle;
   selectionDetail.textContent = model.selectionDetail;
   selectionTarget.textContent = model.selectionTarget ?? '';

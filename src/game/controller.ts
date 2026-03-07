@@ -34,6 +34,7 @@ export interface QueueEntry {
 
 export interface HudModel {
   resources: number;
+  incomePerSecond: number;
   enemyResources: number;
   tick: number;
   paused: boolean;
@@ -255,6 +256,7 @@ export class BattleSession {
 
     return {
       resources: player.resources,
+      incomePerSecond: player.incomePerSecond,
       enemyResources: enemy.resources,
       tick: this.state.sim.tick,
       paused: this.paused,

@@ -50,7 +50,43 @@ describe('simulation', () => {
     stepSimulation(state, defaultGameConfig, 220);
 
     expect(state.sim.players.player.resources).toBeGreaterThan(initialResources);
+    expect(state.sim.players.player.incomePerSecond).toBeGreaterThanOrEqual(0);
     expect(state.sim.resources['ore-west'].amount).toBeLessThan(initialOre);
+  });
+
+  it('buffers refinery income and credits it on second boundaries', () => {
+    const state = createInitialGameState(defaultGameConfig);
+    const playerCourier = Object.values(state.sim.units).find(
+      (unit) => unit.ownerId === 'player' && unit.unitTypeId === 'courier',
+    );
+    const playerRefinery = Object.values(state.sim.buildings).find(
+      (building) => building.ownerId === 'player' && building.buildingTypeId === 'refinery',
+    );
+
+    if (!playerCourier || !playerRefinery) {
+      throw new Error('Expected player economy setup');
+    }
+
+    const initialResources = state.sim.players.player.resources;
+    playerCourier.cargo = 50;
+    playerCourier.x = playerRefinery.tileX + 1;
+    playerCourier.y = playerRefinery.tileY + 1;
+    playerCourier.order = {
+      kind: 'return',
+      path: [],
+      refineryId: playerRefinery.id,
+    };
+
+    stepSimulation(state, defaultGameConfig, 1);
+
+    expect(state.sim.players.player.resources).toBe(initialResources);
+    expect(state.sim.players.player.pendingIncome).toBe(50);
+
+    stepSimulation(state, defaultGameConfig, defaultGameConfig.tickRate - 1);
+
+    expect(state.sim.players.player.resources).toBe(initialResources + 50);
+    expect(state.sim.players.player.pendingIncome).toBe(0);
+    expect(state.sim.players.player.incomePerSecond).toBe(50);
   });
 
   it('resolves combat and ends the match when the enemy HQ is destroyed', () => {

@@ -199,6 +199,8 @@ export interface PlayerState {
   id: PlayerId;
   factionId: FactionId;
   resources: number;
+  pendingIncome: number;
+  incomePerSecond: number;
   defeated: boolean;
   lastAttackTick: number;
 }
