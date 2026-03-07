@@ -2,6 +2,7 @@ import { canPlayerBuild, canPlayerProduce, defaultGameConfig, getBuildingConfig,
 import { createInitialGameState, getBuildPlacementStatus, getSelectionSummary, issueCommand, stepSimulation } from './simulation';
 import type {
   BuildingState,
+  Command,
   CommandMode,
   GameConfig,
   GameState,
@@ -9,6 +10,7 @@ import type {
   PlacementPreview,
   PlayerId,
   SelectionSummary,
+  SimulationState,
   UnitState,
 } from './types';
 
@@ -66,8 +68,16 @@ export interface HudModel {
 
 type Listener = (state: GameState) => void;
 
+export interface BattleSessionOptions {
+  localPlayerId?: PlayerId;
+  authoritative?: boolean;
+  onCommandIssued?: (command: Command) => void;
+}
+
 export class BattleSession {
   readonly config: GameConfig;
+  readonly localPlayerId: PlayerId;
+  readonly authoritative: boolean;
   state: GameState;
   paused = false;
 
@@ -75,10 +85,14 @@ export class BattleSession {
   private listeners = new Set<Listener>();
   private selectionCache: SelectionSummary | null = null;
   private hudModelCache: HudModel | null = null;
+  private onCommandIssued?: (command: Command) => void;
 
-  constructor(config: GameConfig = defaultGameConfig) {
+  constructor(config: GameConfig = defaultGameConfig, options: BattleSessionOptions = {}) {
     this.config = config;
     this.state = createInitialGameState(config);
+    this.localPlayerId = options.localPlayerId ?? config.map.spawns[0]?.playerId ?? 'player';
+    this.authoritative = options.authoritative ?? true;
+    this.onCommandIssued = options.onCommandIssued;
   }
 
   subscribe(listener: Listener) {
@@ -128,7 +142,7 @@ export class BattleSession {
   }
 
   update(deltaMs: number) {
-    if (this.paused || this.state.sim.winnerId) {
+    if (!this.authoritative || this.paused || this.state.sim.winnerId) {
       return;
     }
 
@@ -148,6 +162,10 @@ export class BattleSession {
   }
 
   togglePause() {
+    if (!this.authoritative) {
+      return;
+    }
+
     this.paused = !this.paused;
     this.emit();
   }
@@ -199,7 +217,7 @@ export class BattleSession {
     const placement = getBuildPlacementStatus(
       this.state,
       this.config,
-      'player',
+      this.localPlayerId,
       buildingTypeId,
       tile.x,
       tile.y,
@@ -220,13 +238,14 @@ export class BattleSession {
       return false;
     }
 
-    issueCommand(this.state, this.config, {
+    const command: Command = {
       type: 'build',
-      playerId: 'player',
+      playerId: this.localPlayerId,
       buildingTypeId: preview.buildingTypeId,
       tileX: preview.tileX,
       tileY: preview.tileY,
-    });
+    };
+    this.dispatchCommand(command);
 
     this.state.render.commandMode = 'normal';
     this.state.render.placementPreview = null;
@@ -255,23 +274,23 @@ export class BattleSession {
   }
 
   commandSelectedUnits(target: GridPoint, targetId?: string) {
-    const selectedUnits = this.getSelection().units.filter((unit) => unit.ownerId === 'player');
+    const selectedUnits = this.getSelection().units.filter((unit) => unit.ownerId === this.localPlayerId);
     if (selectedUnits.length === 0) {
       return;
     }
 
     if (this.state.render.commandMode === 'attack-move' || targetId) {
-      issueCommand(this.state, this.config, {
+      this.dispatchCommand({
         type: 'attack',
-        playerId: 'player',
+        playerId: this.localPlayerId,
         unitIds: selectedUnits.map((unit) => unit.id),
         target,
         targetId,
       });
     } else {
-      issueCommand(this.state, this.config, {
+      this.dispatchCommand({
         type: 'move',
-        playerId: 'player',
+        playerId: this.localPlayerId,
         unitIds: selectedUnits.map((unit) => unit.id),
         target,
       });
@@ -288,7 +307,7 @@ export class BattleSession {
     }
 
     const building = selected.buildings[0];
-    if (building.ownerId !== 'player') {
+    if (building.ownerId !== this.localPlayerId) {
       return;
     }
 
@@ -302,12 +321,35 @@ export class BattleSession {
       return;
     }
 
-    issueCommand(this.state, this.config, {
+    this.dispatchCommand({
       type: 'produce',
-      playerId: 'player',
+      playerId: this.localPlayerId,
       buildingId: selected.buildings[0].id,
       unitTypeId,
     });
+    this.emit();
+  }
+
+  private dispatchCommand(command: Command) {
+    if (this.authoritative) {
+      issueCommand(this.state, this.config, command);
+      return;
+    }
+
+    this.onCommandIssued?.(command);
+  }
+
+  applyRemoteCommand(command: Command) {
+    if (!this.authoritative) {
+      return;
+    }
+
+    issueCommand(this.state, this.config, command);
+    this.emit();
+  }
+
+  setSimulationSnapshot(sim: SimulationState) {
+    this.state.sim = sim;
     this.emit();
   }
 
@@ -317,10 +359,15 @@ export class BattleSession {
     }
 
     const selection = this.getSelection();
-    const player = this.state.sim.players.player;
-    const enemy = this.state.sim.players.enemy;
+    const allPlayers = Object.values(this.state.sim.players);
+    const player = this.state.sim.players[this.localPlayerId] ?? allPlayers[0];
+    if (!player) {
+      throw new Error('No players available in simulation state');
+    }
+    const opponentIds = allPlayers.map((entry) => entry.id).filter((id) => id !== player.id);
+    const enemyResources = opponentIds.reduce((sum, id) => sum + (this.state.sim.players[id]?.resources ?? 0), 0);
     const faction = this.config.factions[player.factionId];
-    const economy = buildEconomySnapshot(this.state, this.config, 'player');
+    const economy = buildEconomySnapshot(this.state, this.config, player.id);
     const selectedBuilding =
       selection.buildings.length === 1 && selection.units.length === 0 ? selection.buildings[0] : null;
 
@@ -331,14 +378,14 @@ export class BattleSession {
       pendingIncome: player.pendingIncome,
       activeWorkers: economy.activeWorkers,
       activeResourceNodes: Object.values(this.state.sim.resources).filter((resource) => resource.amount > 0).length,
-      enemyResources: enemy.resources,
+      enemyResources,
       tick: this.state.sim.tick,
       paused: this.paused,
       mapName: this.config.map.name,
       mapSizeLabel: `${this.config.map.width} x ${this.config.map.height}`,
       selectionCount: selection.units.length + selection.buildings.length,
       winner: this.state.sim.winnerId
-        ? this.state.sim.winnerId === 'player'
+        ? this.state.sim.winnerId === player.id
           ? 'Victory'
           : 'Defeat'
         : null,
@@ -357,19 +404,19 @@ export class BattleSession {
             cost: buildingConfig.cost,
             imagePath: buildingConfig.image?.path ?? null,
             disabled:
-              !canPlayerBuild(this.config, 'player', player.factionId, this.state.sim.buildings, buildingTypeId) ||
+              !canPlayerBuild(this.config, player.id, player.factionId, this.state.sim.buildings, buildingTypeId) ||
               player.resources < buildingConfig.cost,
             active: this.state.render.placementPreview?.buildingTypeId === buildingTypeId,
           };
         }),
       trainActions: selectedBuilding ? getTrainActions(this.config, player.factionId, selectedBuilding, player.resources) : [],
-      armyOverview: buildArmyOverview(this.state, this.config, 'player'),
-      enemyArmyOverview: buildArmyOverview(this.state, this.config, 'enemy'),
-      productionQueues: buildProductionQueues(this.state, this.config, 'player'),
-      playerUnitCount: getPlayerUnits(this.state.sim.units, 'player').length,
-      enemyUnitCount: getPlayerUnits(this.state.sim.units, 'enemy').length,
-      playerBuildingCount: getPlayerBuildings(this.state.sim.buildings, 'player').length,
-      enemyBuildingCount: getPlayerBuildings(this.state.sim.buildings, 'enemy').length,
+      armyOverview: buildArmyOverview(this.state, this.config, [player.id]),
+      enemyArmyOverview: buildArmyOverview(this.state, this.config, opponentIds),
+      productionQueues: buildProductionQueues(this.state, this.config, player.id),
+      playerUnitCount: getPlayerUnits(this.state.sim.units, player.id).length,
+      enemyUnitCount: opponentIds.reduce((sum, id) => sum + getPlayerUnits(this.state.sim.units, id).length, 0),
+      playerBuildingCount: getPlayerBuildings(this.state.sim.buildings, player.id).length,
+      enemyBuildingCount: opponentIds.reduce((sum, id) => sum + getPlayerBuildings(this.state.sim.buildings, id).length, 0),
     };
 
     this.hudModelCache = model;
@@ -606,16 +653,21 @@ function describeSelectionCombat(_state: GameState, config: GameConfig, selectio
   return null;
 }
 
-function buildArmyOverview(state: GameState, config: GameConfig, playerId: PlayerId): ArmyEntry[] {
-  const units = getPlayerUnits(state.sim.units, playerId);
+function buildArmyOverview(state: GameState, config: GameConfig, playerIds: PlayerId[]): ArmyEntry[] {
   const counts: Record<string, number> = {};
+  const factionByUnitType = new Map<string, BuildingState['factionId']>();
 
-  units.forEach((unit) => {
-    counts[unit.unitTypeId] = (counts[unit.unitTypeId] ?? 0) + 1;
+  playerIds.forEach((playerId) => {
+    getPlayerUnits(state.sim.units, playerId).forEach((unit) => {
+      counts[unit.unitTypeId] = (counts[unit.unitTypeId] ?? 0) + 1;
+      if (!factionByUnitType.has(unit.unitTypeId)) {
+        factionByUnitType.set(unit.unitTypeId, unit.factionId);
+      }
+    });
   });
 
   return Object.entries(counts).map(([unitTypeId, count]) => {
-    const factionId = state.sim.players[playerId].factionId;
+    const factionId = factionByUnitType.get(unitTypeId) ?? 'aurora';
     const uConfig = getUnitConfig(config, factionId, unitTypeId);
     return { unitTypeId, name: uConfig.name, count };
   });

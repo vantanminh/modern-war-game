@@ -50,7 +50,7 @@ interface SimulationTickCache {
   tick: number;
   blockedSet?: Set<string>;
   ignoredBlockedSets: Map<string, Set<string>>;
-  targetsByOwner?: Record<PlayerId, TargetBuckets>;
+  targetsByOwner?: Record<string, TargetBuckets>;
 }
 
 interface UnitNavigationState {
@@ -182,21 +182,35 @@ function getResourceTileSet(config: GameConfig) {
 function getTargetsByOwner(sim: SimulationState, ownerId: PlayerId) {
   const cache = getSimulationTickCache(sim);
   if (!cache.targetsByOwner) {
-    cache.targetsByOwner = {
-      player: { units: [], buildings: [] },
-      enemy: { units: [], buildings: [] },
-    };
+    cache.targetsByOwner = Object.fromEntries(
+      Object.keys(sim.players).map((playerId) => [playerId, { units: [], buildings: [] }]),
+    );
 
     Object.values(sim.units).forEach((unit) => {
-      cache.targetsByOwner![unit.ownerId].units.push(unit);
+      if (cache.targetsByOwner?.[unit.ownerId]) {
+        cache.targetsByOwner[unit.ownerId].units.push(unit);
+      }
     });
 
     Object.values(sim.buildings).forEach((building) => {
-      cache.targetsByOwner![building.ownerId].buildings.push(building);
+      if (cache.targetsByOwner?.[building.ownerId]) {
+        cache.targetsByOwner[building.ownerId].buildings.push(building);
+      }
     });
   }
 
-  return cache.targetsByOwner[ownerId === 'player' ? 'enemy' : 'player'];
+  const enemyBuckets: TargetBuckets = { units: [], buildings: [] };
+
+  Object.entries(cache.targetsByOwner).forEach(([playerId, bucket]) => {
+    if (playerId === ownerId || sim.players[playerId]?.defeated) {
+      return;
+    }
+
+    enemyBuckets.units.push(...bucket.units);
+    enemyBuckets.buildings.push(...bucket.buildings);
+  });
+
+  return enemyBuckets;
 }
 
 function distance(a: { x: number; y: number }, b: { x: number; y: number }) {
@@ -427,7 +441,7 @@ function cleanupDestroyed(sim: SimulationState) {
 }
 
 function checkLossCondition(sim: SimulationState, config: GameConfig) {
-  (Object.keys(sim.players) as PlayerId[]).forEach((playerId) => {
+  Object.keys(sim.players).forEach((playerId) => {
     const playerBuildings = getPlayerBuildings(sim.buildings, playerId);
     const hasHQ = playerBuildings.some((building) =>
       getBuildingConfig(config, building.factionId, building.buildingTypeId).isHQ,
@@ -442,12 +456,10 @@ function checkLossCondition(sim: SimulationState, config: GameConfig) {
     }
   });
 
-  if (sim.players.player.defeated && !sim.players.enemy.defeated) {
-    sim.winnerId = 'enemy';
-    sim.lossReason = 'Your command structure collapsed.';
-  } else if (sim.players.enemy.defeated && !sim.players.player.defeated) {
-    sim.winnerId = 'player';
-    sim.lossReason = 'Enemy command structure neutralized.';
+  const alivePlayers = Object.keys(sim.players).filter((playerId) => !sim.players[playerId].defeated);
+  if (alivePlayers.length === 1) {
+    sim.winnerId = alivePlayers[0];
+    sim.lossReason = 'Only one command structure remains active.';
   }
 }
 
@@ -1032,7 +1044,7 @@ function payoutIncome(sim: SimulationState, config: GameConfig) {
     return;
   }
 
-  (Object.keys(sim.players) as PlayerId[]).forEach((playerId) => {
+  Object.keys(sim.players).forEach((playerId) => {
     const player = sim.players[playerId];
     player.incomePerSecond = player.pendingIncome;
     if (player.pendingIncome > 0) {
@@ -1198,9 +1210,9 @@ function findEnemyThreatsNearBase(
   baseCenter: GridPoint,
   radius: number,
 ) {
-  const enemyId = playerId === 'player' ? 'enemy' : 'player';
+  const enemyIds = Object.keys(sim.players).filter((id) => id !== playerId && !sim.players[id].defeated);
   return Object.values(sim.units).filter(
-    (unit) => unit.ownerId === enemyId && distance(unit, baseCenter) <= radius,
+    (unit) => enemyIds.includes(unit.ownerId) && distance(unit, baseCenter) <= radius,
   );
 }
 
@@ -1251,10 +1263,10 @@ function runAiTurn(state: GameState, config: GameConfig, playerId: PlayerId) {
     return;
   }
 
-  const enemyId: PlayerId = playerId === 'player' ? 'enemy' : 'player';
+  const enemyIds = Object.keys(state.sim.players).filter((id) => id !== playerId && !state.sim.players[id].defeated);
   const playerBuildings = getPlayerBuildings(state.sim.buildings, playerId);
   const playerUnits = getPlayerUnits(state.sim.units, playerId);
-  const enemyUnits = getPlayerUnits(state.sim.units, enemyId);
+  const enemyUnits = Object.values(state.sim.units).filter((unit) => enemyIds.includes(unit.ownerId));
   const workerCount = playerUnits.filter((u) => u.unitTypeId === 'courier').length;
   const combatUnits = playerUnits.filter((u) => u.unitTypeId !== 'courier');
   const readyCombatUnits = combatUnits.filter((u) => u.order.kind === 'idle' || u.order.kind === 'move');
@@ -1396,7 +1408,7 @@ function runAiTurn(state: GameState, config: GameConfig, playerId: PlayerId) {
   }
 
   // --- ATTACK: smarter decisions ---
-  const enemyBuildings = getPlayerBuildings(state.sim.buildings, enemyId);
+  const enemyBuildings = Object.values(state.sim.buildings).filter((building) => enemyIds.includes(building.ownerId));
   const enemyHQ = enemyBuildings.find((b) => getBuildingConfig(config, b.factionId, b.buildingTypeId).isHQ);
   const enemyCombatCount = enemyUnits.filter((u) => u.unitTypeId !== 'courier').length;
 
@@ -1510,7 +1522,9 @@ export function stepSimulation(
 
     if (state.sim.tick % config.ai.thinkInterval === 0) {
       config.ai.automatedPlayers.forEach((playerId) => {
-        runAiTurn(state, config, playerId);
+        if (state.sim.players[playerId]) {
+          runAiTurn(state, config, playerId);
+        }
       });
     }
 
@@ -1544,30 +1558,26 @@ export function getSelectionSummary(state: GameState): SelectionSummary {
 export function createInitialGameState(config: GameConfig = defaultGameConfig): GameState {
   idCounter = 0;
 
+  const players = Object.fromEntries(
+    config.map.spawns.map((spawn) => [
+      spawn.playerId,
+      {
+        id: spawn.playerId,
+        factionId: spawn.factionId,
+        resources: config.factions[spawn.factionId].startResources,
+        pendingIncome: 0,
+        incomePerSecond: 0,
+        defeated: false,
+        lastAttackTick: -999,
+      },
+    ]),
+  );
+
   const sim: SimulationState = {
     tick: 0,
     winnerId: null,
     lossReason: null,
-    players: {
-      player: {
-        id: 'player',
-        factionId: 'aurora',
-        resources: config.factions.aurora.startResources,
-        pendingIncome: 0,
-        incomePerSecond: 0,
-        defeated: false,
-        lastAttackTick: -999,
-      },
-      enemy: {
-        id: 'enemy',
-        factionId: 'obsidian',
-        resources: config.factions.obsidian.startResources,
-        pendingIncome: 0,
-        incomePerSecond: 0,
-        defeated: false,
-        lastAttackTick: -999,
-      },
-    },
+    players,
     units: {},
     buildings: {},
     resources: Object.fromEntries(

@@ -1,6 +1,7 @@
 import './style.css';
-import { defaultGameConfig, getBuildingConfig } from './game/config';
+import { createLanMatchConfig, defaultGameConfig, getBuildingConfig } from './game/config';
 import { BattleSession } from './game/controller';
+import type { Command, GameConfig, SimulationState } from './game/types';
 
 const app = document.querySelector<HTMLDivElement>('#app');
 
@@ -96,10 +97,34 @@ app.innerHTML = `
         <div id="game-root"></div>
         <div class="overlay overlay-center" id="menu-overlay">
           <div class="overlay-card">
-            <p class="eyebrow">Single-player Skirmish</p>
+            <p class="eyebrow">Battle Setup</p>
             <h2>${defaultGameConfig.map.name}</h2>
-            <p>Expanded frontline: secure five ore deposits, scale up, and break the opposing Command Core.</p>
-            <button class="primary-button" id="start-button" type="button">Start Skirmish</button>
+            <p>Đấu LAN hỗ trợ 2 đến 4 team: 1 máy làm host, máy khác vào bằng URL IP nội bộ.</p>
+            <button class="primary-button" id="start-button" type="button">Start Skirmish (Solo)</button>
+            <div class="lan-card">
+              <label class="lan-field">
+                <span>WebSocket URL</span>
+                <input id="lan-url" type="text" value="ws://127.0.0.1:8787" />
+              </label>
+              <label class="lan-field">
+                <span>Room ID</span>
+                <input id="lan-room" type="text" value="lan-room" />
+              </label>
+              <label class="lan-field">
+                <span>Số team</span>
+                <select id="lan-team-count">
+                  <option value="2" selected>2 teams</option>
+                  <option value="3">3 teams</option>
+                  <option value="4">4 teams</option>
+                </select>
+              </label>
+              <div class="lan-actions">
+                <button class="chrome-button" id="lan-host-button" type="button">Host LAN</button>
+                <button class="chrome-button" id="lan-join-button" type="button">Join LAN</button>
+                <button class="primary-button" id="lan-start-button" type="button" disabled>Start Match</button>
+              </div>
+              <p id="lan-status">LAN status: idle.</p>
+            </div>
           </div>
         </div>
         <div class="overlay overlay-center hidden" id="end-overlay">
@@ -136,6 +161,13 @@ app.innerHTML = `
 
 const gameRoot = document.querySelector<HTMLDivElement>('#game-root')!;
 const startButton = document.querySelector<HTMLButtonElement>('#start-button')!;
+const lanHostButton = document.querySelector<HTMLButtonElement>('#lan-host-button')!;
+const lanJoinButton = document.querySelector<HTMLButtonElement>('#lan-join-button')!;
+const lanStartButton = document.querySelector<HTMLButtonElement>('#lan-start-button')!;
+const lanUrlInput = document.querySelector<HTMLInputElement>('#lan-url')!;
+const lanRoomInput = document.querySelector<HTMLInputElement>('#lan-room')!;
+const lanTeamCountInput = document.querySelector<HTMLSelectElement>('#lan-team-count')!;
+const lanStatus = document.querySelector<HTMLParagraphElement>('#lan-status')!;
 const playAgainButton = document.querySelector<HTMLButtonElement>('#play-again-button')!;
 const restartButton = document.querySelector<HTMLButtonElement>('#restart-button')!;
 const pauseButton = document.querySelector<HTMLButtonElement>('#pause-button')!;
@@ -171,6 +203,14 @@ const trainActionButtons = new Map<string, HTMLButtonElement>();
 
 let phaserGame: import('phaser').Game | null = null;
 let session: BattleSession | null = null;
+let currentConfig: GameConfig = defaultGameConfig;
+let localPlayerId = 'player';
+let socket: WebSocket | null = null;
+let lanHostMode = false;
+let lanConnected = false;
+let lanRoomId = '';
+let lanTeamCount = 2;
+let lastSentTick = -1;
 let lastRenderedResources = 0;
 let payoutBadgeTimeout: number | null = null;
 
@@ -321,17 +361,152 @@ trainActions.addEventListener('click', (event) => {
   handleActionContainerPress(event, trainActions, (actionId) => session?.queueSelectedBuildingUnit(actionId));
 });
 
-async function mountBattle() {
+function setLanStatus(message: string) {
+  lanStatus.textContent = `LAN status: ${message}`;
+}
+
+function sendLanMessage(payload: unknown) {
+  if (!socket || socket.readyState !== WebSocket.OPEN) {
+    return;
+  }
+
+  socket.send(JSON.stringify(payload));
+}
+
+function closeLanSocket() {
+  if (!socket) {
+    return;
+  }
+
+  socket.close();
+  socket = null;
+  lanConnected = false;
+  lanStartButton.disabled = true;
+}
+
+function handleLanServerMessage(raw: unknown) {
+  if (!raw || typeof raw !== 'object' || !('type' in raw)) {
+    return;
+  }
+
+  const message = raw as { type: string; [key: string]: unknown };
+
+  if (message.type === 'lobby') {
+    const connected = Number(message.connected ?? 0);
+    const required = Number(message.teamCount ?? lanTeamCount);
+    lanConnected = true;
+    lanStartButton.disabled = !lanHostMode || connected < 2;
+    setLanStatus(`room ${lanRoomId} | ${connected}/${required} team joined`);
+    return;
+  }
+
+  if (message.type === 'assigned') {
+    const assignedId = typeof message.playerId === 'string' ? message.playerId : localPlayerId;
+    localPlayerId = assignedId;
+    return;
+  }
+
+  if (message.type === 'start') {
+    const nextTeamCount = Number(message.teamCount ?? lanTeamCount);
+    lanTeamCount = Math.max(2, Math.min(4, Number.isFinite(nextTeamCount) ? nextTeamCount : 2));
+    currentConfig = createLanMatchConfig(lanTeamCount);
+    mountBattle({
+      config: currentConfig,
+      localPlayerId,
+      authoritative: lanHostMode,
+      onCommandIssued: (command) => {
+        sendLanMessage({ type: 'input', command });
+      },
+    });
+    return;
+  }
+
+  if (message.type === 'input' && lanHostMode && session) {
+    const command = message.command as Command | undefined;
+    if (command) {
+      session.applyRemoteCommand(command);
+    }
+    return;
+  }
+
+  if (message.type === 'snapshot' && !lanHostMode && session) {
+    const sim = message.sim as SimulationState | undefined;
+    if (sim) {
+      session.setSimulationSnapshot(sim);
+    }
+  }
+}
+
+function connectLan(role: 'host' | 'join') {
+  closeLanSocket();
+  lanRoomId = lanRoomInput.value.trim() || 'lan-room';
+  lanTeamCount = Math.max(2, Math.min(4, Number(lanTeamCountInput.value) || 2));
+  const url = lanUrlInput.value.trim();
+
+  if (!url) {
+    setLanStatus('missing WebSocket URL');
+    return;
+  }
+
+  lanHostMode = role === 'host';
+  socket = new WebSocket(url);
+  setLanStatus('connecting...');
+
+  socket.addEventListener('open', () => {
+    if (!socket) {
+      return;
+    }
+
+    sendLanMessage(
+      lanHostMode
+        ? { type: 'create-room', roomId: lanRoomId, teamCount: lanTeamCount }
+        : { type: 'join-room', roomId: lanRoomId },
+    );
+  });
+
+  socket.addEventListener('message', (event) => {
+    try {
+      handleLanServerMessage(JSON.parse(String(event.data)));
+    } catch {
+      setLanStatus('received invalid server payload');
+    }
+  });
+
+  socket.addEventListener('close', () => {
+    lanConnected = false;
+    lanStartButton.disabled = true;
+    setLanStatus('disconnected');
+  });
+
+  socket.addEventListener('error', () => {
+    setLanStatus('connection error');
+  });
+}
+
+async function mountBattle(options: {
+  config?: GameConfig;
+  localPlayerId?: string;
+  authoritative?: boolean;
+  onCommandIssued?: (command: Command) => void;
+} = {}) {
   const [{ default: Phaser }, { BattleScene }] = await Promise.all([
     import('phaser'),
     import('./game/phaser/BattleScene'),
   ]);
 
+  currentConfig = options.config ?? defaultGameConfig;
+  localPlayerId = options.localPlayerId ?? currentConfig.map.spawns[0]?.playerId ?? 'player';
+  lastSentTick = -1;
+
   phaserGame?.destroy(true);
   gameRoot.innerHTML = '';
 
-  session = new BattleSession();
-  lastRenderedResources = session.state.sim.players.player.resources;
+  session = new BattleSession(currentConfig, {
+    localPlayerId,
+    authoritative: options.authoritative ?? true,
+    onCommandIssued: options.onCommandIssued,
+  });
+  lastRenderedResources = session.state.sim.players[localPlayerId]?.resources ?? 0;
   if (payoutBadgeTimeout !== null) {
     window.clearTimeout(payoutBadgeTimeout);
     payoutBadgeTimeout = null;
@@ -339,7 +514,13 @@ async function mountBattle() {
   payoutBadge.classList.add('hidden');
   payoutBadge.textContent = '';
   resourceCount.classList.remove('economy-total-flash');
-  session.subscribe(() => renderHud());
+  session.subscribe((state) => {
+    if (lanHostMode && session?.authoritative && lanConnected && state.sim.tick !== lastSentTick) {
+      lastSentTick = state.sim.tick;
+      sendLanMessage({ type: 'snapshot', sim: state.sim });
+    }
+    renderHud();
+  });
 
   phaserGame = new Phaser.Game({
     type: Phaser.AUTO,
@@ -442,7 +623,7 @@ function renderHud() {
 
   if (model.winner) {
     endOverlay.classList.remove('hidden');
-    endKicker.textContent = model.winner === 'Victory' ? 'Aurora Combine' : 'Obsidian Front';
+    endKicker.textContent = model.winner === 'Victory' ? 'Your Team' : 'Opponent Team';
     endTitle.textContent = model.winner;
     endReason.textContent = session.state.sim.lossReason ?? '';
   }
@@ -450,16 +631,69 @@ function renderHud() {
   if (session.state.render.placementPreview) {
     const buildingConfig = getBuildingConfig(
       session.config,
-      session.state.sim.players.player.factionId,
+      session.state.sim.players[session.localPlayerId]?.factionId ?? 'aurora',
       session.state.render.placementPreview.buildingTypeId,
     );
     statusLine.textContent = `${buildingConfig.name}: left click to place, right click or Esc to cancel.`;
   }
 }
 
-startButton.addEventListener('click', mountBattle);
-playAgainButton.addEventListener('click', mountBattle);
-restartButton.addEventListener('click', mountBattle);
+if (window.location.hostname && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+  lanUrlInput.value = `ws://${window.location.hostname}:8787`;
+}
+
+startButton.addEventListener('click', () => {
+  lanHostMode = false;
+  currentConfig = defaultGameConfig;
+  mountBattle({
+    config: currentConfig,
+    localPlayerId: currentConfig.map.spawns[0]?.playerId ?? 'player',
+    authoritative: true,
+  });
+});
+
+lanHostButton.addEventListener('click', () => {
+  connectLan('host');
+});
+
+lanJoinButton.addEventListener('click', () => {
+  connectLan('join');
+});
+
+lanStartButton.addEventListener('click', () => {
+  if (!lanHostMode || !lanConnected) {
+    return;
+  }
+
+  sendLanMessage({ type: 'start-match' });
+});
+
+playAgainButton.addEventListener('click', () => {
+  if (lanHostMode && lanConnected) {
+    sendLanMessage({ type: 'start-match' });
+    return;
+  }
+
+  mountBattle({
+    config: currentConfig,
+    localPlayerId,
+    authoritative: true,
+  });
+});
+
+restartButton.addEventListener('click', () => {
+  if (lanHostMode && lanConnected) {
+    sendLanMessage({ type: 'start-match' });
+    return;
+  }
+
+  mountBattle({
+    config: currentConfig,
+    localPlayerId,
+    authoritative: true,
+  });
+});
+
 pauseButton.addEventListener('click', () => {
   session?.togglePause();
 });

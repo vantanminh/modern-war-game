@@ -10,7 +10,7 @@ export interface RectangleArea {
   height: number;
 }
 
-export type PlayerId = 'player' | 'enemy';
+export type PlayerId = string;
 export type FactionId = 'aurora' | 'obsidian';
 export type ArmorType = 'light' | 'armored' | 'structure';
 export type UnitRole = 'worker' | 'infantry' | 'vehicle' | 'artillery';
@@ -221,7 +221,7 @@ export interface SimulationState {
   tick: number;
   winnerId: PlayerId | null;
   lossReason: string | null;
-  players: Record<PlayerId, PlayerState>;
+  players: Record<string, PlayerState>;
   units: Record<string, UnitState>;
   buildings: Record<string, BuildingState>;
   resources: Record<string, ResourceNodeState>;

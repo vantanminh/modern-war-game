@@ -244,6 +244,41 @@ const obstacleAreas = [
   { x: 27, y: 24, width: 4, height: 2 },
 ];
 
+const lanSpawnTemplates = [
+  {
+    playerId: 'team1',
+    factionId: 'aurora' as const,
+    hq: { x: 4, y: 23 },
+    refinery: { x: 7, y: 21 },
+    rally: { x: 12, y: 21 },
+    buildAnchor: { x: 12, y: 24 },
+  },
+  {
+    playerId: 'team2',
+    factionId: 'obsidian' as const,
+    hq: { x: 41, y: 4 },
+    refinery: { x: 37, y: 7 },
+    rally: { x: 33, y: 9 },
+    buildAnchor: { x: 34, y: 6 },
+  },
+  {
+    playerId: 'team3',
+    factionId: 'aurora' as const,
+    hq: { x: 4, y: 4 },
+    refinery: { x: 7, y: 6 },
+    rally: { x: 12, y: 8 },
+    buildAnchor: { x: 10, y: 4 },
+  },
+  {
+    playerId: 'team4',
+    factionId: 'obsidian' as const,
+    hq: { x: 40, y: 23 },
+    refinery: { x: 36, y: 21 },
+    rally: { x: 33, y: 20 },
+    buildAnchor: { x: 34, y: 24 },
+  },
+];
+
 export const defaultGameConfig: GameConfig = {
   tickRate: 10,
   tileSize: 28,
@@ -403,4 +438,26 @@ export function canPlayerProduce(
     faction.availableUnitIds.includes(unitTypeId) &&
     Boolean(buildingConfig.producesUnitIds?.includes(unitTypeId))
   );
+}
+
+export function getLanTeamIds(teamCount: number) {
+  const clamped = Math.max(2, Math.min(4, Math.floor(teamCount)));
+  return lanSpawnTemplates.slice(0, clamped).map((spawn) => spawn.playerId);
+}
+
+export function createLanMatchConfig(teamCount: number): GameConfig {
+  const clamped = Math.max(2, Math.min(4, Math.floor(teamCount)));
+  const selectedSpawns = lanSpawnTemplates.slice(0, clamped);
+
+  return {
+    ...defaultGameConfig,
+    map: {
+      ...defaultGameConfig.map,
+      spawns: selectedSpawns,
+    },
+    ai: {
+      ...defaultGameConfig.ai,
+      automatedPlayers: [],
+    },
+  };
 }

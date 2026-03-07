@@ -196,7 +196,7 @@ export class BattleScene extends Phaser.Scene {
       return;
     }
 
-    if (hit?.ownerId === 'enemy') {
+    if (hit && hit.ownerId !== this.session.localPlayerId) {
       this.session.commandSelectedUnits(tile, hit.id);
       return;
     }
@@ -206,7 +206,7 @@ export class BattleScene extends Phaser.Scene {
 
   private selectAtPoint(point: Phaser.Math.Vector2, additive: boolean) {
     const hit = this.hitEntity(point.x, point.y);
-    if (!hit || hit.ownerId !== 'player') {
+    if (!hit || hit.ownerId !== this.session.localPlayerId) {
       if (!additive) {
         this.session.setSelection([]);
       }
@@ -237,7 +237,7 @@ export class BattleScene extends Phaser.Scene {
     const selectedIds = Object.values(this.session.state.sim.units)
       .filter(
         (unit) =>
-          unit.ownerId === 'player' &&
+          unit.ownerId === this.session.localPlayerId &&
           unit.x * this.session.config.tileSize >= left &&
           unit.x * this.session.config.tileSize <= right &&
           unit.y * this.session.config.tileSize >= top &&
@@ -256,7 +256,7 @@ export class BattleScene extends Phaser.Scene {
 
   private getDefaultFocusPoint() {
     const playerHq = Object.values(this.session.state.sim.buildings).find(
-      (building) => building.ownerId === 'player' && building.buildingTypeId === 'command-core',
+      (building) => building.ownerId === this.session.localPlayerId && building.buildingTypeId === 'command-core',
     );
 
     if (!playerHq) {
@@ -373,7 +373,7 @@ export class BattleScene extends Phaser.Scene {
         (building.tileX + buildingConfig.footprint.width / 2) * tileSize,
         (building.tileY + buildingConfig.footprint.height / 2) * tileSize,
       );
-      this.applyEntityAppearance(bundle.base, building.ownerId === 'player' ? 0xffffff : 0xffb0b0, building.ownerId === 'player' ? buildingConfig.color : 0xff6b6b, building.constructionRemaining > 0 ? 0.6 : 0.95);
+      this.applyEntityAppearance(bundle.base, building.ownerId === this.session.localPlayerId ? 0xffffff : 0xffb0b0, building.ownerId === this.session.localPlayerId ? buildingConfig.color : 0xff6b6b, building.constructionRemaining > 0 ? 0.6 : 0.95);
       bundle.frame.setStrokeStyle(3, 0x081019, 1);
       bundle.hp.width = Math.max(
         4,
@@ -390,7 +390,7 @@ export class BattleScene extends Phaser.Scene {
         bundle.flashUntil = this.time.now + 140;
       }
       bundle.container.setPosition(unit.x * tileSize, unit.y * tileSize);
-      this.applyEntityAppearance(bundle.base, unit.ownerId === 'player' ? 0xffffff : 0xffb0b0, unit.ownerId === 'player' ? unitConfig.color : 0xff6b6b, 0.95);
+      this.applyEntityAppearance(bundle.base, unit.ownerId === this.session.localPlayerId ? 0xffffff : 0xffb0b0, unit.ownerId === this.session.localPlayerId ? unitConfig.color : 0xff6b6b, 0.95);
       bundle.frame.setStrokeStyle(2, bundle.flashUntil > this.time.now ? 0xfef08a : 0x081019, 1);
       bundle.hp.width = Math.max(3, (unit.hp / unitConfig.maxHp) * (tileSize * 0.8));
       const cooldownRatio = unitConfig.attackCooldown > 0
