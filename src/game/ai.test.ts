@@ -11,9 +11,11 @@ describe('ai', () => {
 
     const enemyBuildings = Object.values(state.sim.buildings).filter((building) => building.ownerId === 'enemy');
     const enemyUnits = Object.values(state.sim.units).filter((unit) => unit.ownerId === 'enemy');
+    const enemyWorkers = enemyUnits.filter((unit) => unit.unitTypeId === 'courier');
 
     expect(enemyBuildings.some((building) => building.buildingTypeId === 'barracks')).toBe(true);
-    expect(enemyUnits.filter((unit) => unit.unitTypeId !== 'courier').length).toBeGreaterThan(2);
+    expect(enemyWorkers.length).toBeGreaterThanOrEqual(4);
+    expect(enemyUnits.filter((unit) => unit.unitTypeId !== 'courier').length).toBeGreaterThanOrEqual(1);
     expect(state.sim.players.enemy.lastAttackTick).toBeGreaterThan(0);
   });
 });

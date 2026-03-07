@@ -134,6 +134,7 @@ export interface AiConfig {
   retreatHpRatio: number;
   maxWorkers: number;
   expandResourceThreshold: number;
+  pathRepathInterval: number;
 }
 
 export interface GameConfig {

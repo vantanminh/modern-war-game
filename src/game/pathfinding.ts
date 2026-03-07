@@ -1,5 +1,10 @@
 import type { GameConfig, GridPoint, RectangleArea, SimulationState } from './types';
 
+export interface ReachablePathResult {
+  point: GridPoint;
+  path: GridPoint[];
+}
+
 const CARDINALS: GridPoint[] = [
   { x: 1, y: 0 },
   { x: -1, y: 0 },
@@ -40,6 +45,10 @@ export function createBlockedSet(config: GameConfig, sim: SimulationState, ignor
 
 function heuristic(a: GridPoint, b: GridPoint) {
   return Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
+}
+
+function distance(a: GridPoint, b: GridPoint) {
+  return Math.hypot(a.x - b.x, a.y - b.y);
 }
 
 function reconstruct(cameFrom: Map<string, GridPoint>, current: GridPoint) {
@@ -131,6 +140,63 @@ export function nearestReachablePoint(
         }
         return candidate;
       }
+    }
+  }
+
+  return null;
+}
+
+export function findBestReachablePath(
+  config: GameConfig,
+  blocked: Set<string>,
+  from: GridPoint,
+  target: GridPoint,
+  searchRadius = 10,
+  maxDistanceFromTarget = Number.POSITIVE_INFINITY,
+): ReachablePathResult | null {
+  if (!inBounds(config, from)) {
+    return null;
+  }
+
+  let best: ReachablePathResult | null = null;
+  let bestPathLength = Infinity;
+  let bestTargetDistance = Infinity;
+
+  for (let radius = 0; radius <= searchRadius; radius += 1) {
+    for (let y = target.y - radius; y <= target.y + radius; y += 1) {
+      for (let x = target.x - radius; x <= target.x + radius; x += 1) {
+        const candidate = { x, y };
+        if (!inBounds(config, candidate) || blocked.has(key(candidate))) {
+          continue;
+        }
+
+        const targetDistance = distance(candidate, target);
+        if (targetDistance > maxDistanceFromTarget) {
+          continue;
+        }
+
+        const path =
+          candidate.x === from.x && candidate.y === from.y
+            ? []
+            : findPath(config, blocked, from, candidate);
+
+        if (path.length === 0 && (candidate.x !== from.x || candidate.y !== from.y)) {
+          continue;
+        }
+
+        if (
+          path.length < bestPathLength ||
+          (path.length === bestPathLength && targetDistance < bestTargetDistance)
+        ) {
+          best = { point: candidate, path };
+          bestPathLength = path.length;
+          bestTargetDistance = targetDistance;
+        }
+      }
+    }
+
+    if (best) {
+      return best;
     }
   }
 

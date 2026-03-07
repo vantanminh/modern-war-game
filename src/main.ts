@@ -44,6 +44,8 @@ app.innerHTML = `
           <p class="panel-label">Selection</p>
           <h3 id="selection-title">No selection</h3>
           <p id="selection-detail">Use left click or drag to select units.</p>
+          <p id="selection-target" class="selection-meta hidden"></p>
+          <p id="selection-combat" class="selection-meta hidden"></p>
         </section>
         <section id="queue-section" class="hidden">
           <p class="panel-label">Production Queue</p>
@@ -100,6 +102,8 @@ const endOverlay = document.querySelector<HTMLDivElement>('#end-overlay')!;
 const resourceCount = document.querySelector<HTMLHeadingElement>('#resource-count')!;
 const selectionTitle = document.querySelector<HTMLHeadingElement>('#selection-title')!;
 const selectionDetail = document.querySelector<HTMLParagraphElement>('#selection-detail')!;
+const selectionTarget = document.querySelector<HTMLParagraphElement>('#selection-target')!;
+const selectionCombat = document.querySelector<HTMLParagraphElement>('#selection-combat')!;
 const statusLine = document.querySelector<HTMLParagraphElement>('#status-line')!;
 const buildActions = document.querySelector<HTMLDivElement>('#build-actions')!;
 const trainActions = document.querySelector<HTMLDivElement>('#train-actions')!;
@@ -162,6 +166,10 @@ function renderHud() {
   resourceCount.textContent = `${model.resources} credits`;
   selectionTitle.textContent = model.selectionTitle;
   selectionDetail.textContent = model.selectionDetail;
+  selectionTarget.textContent = model.selectionTarget ?? '';
+  selectionCombat.textContent = model.selectionCombatDetail ?? '';
+  selectionTarget.classList.toggle('hidden', !model.selectionTarget);
+  selectionCombat.classList.toggle('hidden', !model.selectionCombatDetail);
   statusLine.textContent = `${model.modeLabel} | ${formatTime(model.tick, tickRate)} elapsed`;
   pauseButton.textContent = model.paused ? 'Resume' : 'Pause';
 

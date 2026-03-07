@@ -8,7 +8,15 @@ interface VisualBundle {
   container: Phaser.GameObjects.Container;
   base: Phaser.GameObjects.Rectangle;
   hp: Phaser.GameObjects.Rectangle;
+  cooldown: Phaser.GameObjects.Rectangle;
+  cooldownBg: Phaser.GameObjects.Rectangle;
   selection: Phaser.GameObjects.Rectangle;
+  lastHp: number;
+  flashUntil: number;
+}
+
+function isBuildingState(entity: UnitState | BuildingState): entity is BuildingState {
+  return 'buildingTypeId' in entity;
 }
 
 export class BattleScene extends Phaser.Scene {
@@ -19,6 +27,8 @@ export class BattleScene extends Phaser.Scene {
   private mapGraphics?: Phaser.GameObjects.Graphics;
   private selectionBox?: Phaser.GameObjects.Graphics;
   private previewGraphics?: Phaser.GameObjects.Graphics;
+  private combatGraphics?: Phaser.GameObjects.Graphics;
+  private rangeGraphics?: Phaser.GameObjects.Graphics;
   private dragStart?: Phaser.Math.Vector2;
   private dragCurrent?: Phaser.Math.Vector2;
   private cameraDragLast?: Phaser.Math.Vector2;
@@ -45,6 +55,8 @@ export class BattleScene extends Phaser.Scene {
     this.mapGraphics = this.add.graphics();
     this.selectionBox = this.add.graphics();
     this.previewGraphics = this.add.graphics();
+    this.combatGraphics = this.add.graphics();
+    this.rangeGraphics = this.add.graphics();
 
     this.cursorKeys = this.input.keyboard?.createCursorKeys();
     this.attackKey = this.input.keyboard?.addKey(Phaser.Input.Keyboard.KeyCodes.A);
@@ -75,6 +87,7 @@ export class BattleScene extends Phaser.Scene {
 
     this.drawSelectionBox();
     this.drawPlacementPreview();
+    this.drawCombatOverlays();
   }
 
   private registerInput() {
@@ -292,10 +305,22 @@ export class BattleScene extends Phaser.Scene {
     Object.values(state.sim.units).forEach((unit) => {
       const bundle = this.visuals.get(unit.id) ?? this.createUnitVisual(unit);
       const unitConfig = getUnitConfig(this.session.config, unit.factionId, unit.unitTypeId);
+      if (unit.hp < bundle.lastHp) {
+        bundle.flashUntil = this.time.now + 140;
+      }
       bundle.container.setPosition(unit.x * tileSize, unit.y * tileSize);
       bundle.base.setFillStyle(unit.ownerId === 'player' ? unitConfig.color : 0xff6b6b, 0.95);
+      bundle.base.setStrokeStyle(2, bundle.flashUntil > this.time.now ? 0xfef08a : 0x081019, 1);
       bundle.hp.width = Math.max(3, (unit.hp / unitConfig.maxHp) * (tileSize * 0.8));
+      const cooldownRatio = unitConfig.attackCooldown > 0
+        ? 1 - unit.cooldownRemaining / unitConfig.attackCooldown
+        : 1;
+      const showCooldown = selected.has(unit.id) || unit.order.kind === 'attack-target' || unit.cooldownRemaining > 0;
+      bundle.cooldownBg.setVisible(showCooldown);
+      bundle.cooldown.setVisible(showCooldown);
+      bundle.cooldown.width = Math.max(2, (tileSize * 0.8) * Phaser.Math.Clamp(cooldownRatio, 0.08, 1));
       bundle.selection.setVisible(selected.has(unit.id));
+      bundle.lastHp = unit.hp;
       this.visuals.set(unit.id, bundle);
     });
 
@@ -328,9 +353,13 @@ export class BattleScene extends Phaser.Scene {
 
     const hpBg = this.add.rectangle(0, -size * 0.95, size, 4, 0x111827, 0.9);
     const hp = this.add.rectangle(-size / 2, -size * 0.95, size, 4, 0x86efac, 1).setOrigin(0, 0.5);
+    const cooldownBg = this.add.rectangle(0, size * 0.86, size, 3, 0x111827, 0.84);
+    cooldownBg.setVisible(false);
+    const cooldown = this.add.rectangle(-size / 2, size * 0.86, size, 3, 0xf59e0b, 1).setOrigin(0, 0.5);
+    cooldown.setVisible(false);
 
-    container.add([selection, base, hpBg, hp]);
-    const bundle = { container, base, hp, selection };
+    container.add([selection, base, hpBg, hp, cooldownBg, cooldown]);
+    const bundle = { container, base, hp, cooldown, cooldownBg, selection, lastHp: unit.hp, flashUntil: 0 };
     this.visuals.set(unit.id, bundle);
     return bundle;
   }
@@ -355,11 +384,66 @@ export class BattleScene extends Phaser.Scene {
 
     const hpBg = this.add.rectangle(0, -height / 2 - 8, width, 5, 0x111827, 0.9);
     const hp = this.add.rectangle(-width / 2, -height / 2 - 8, width, 5, 0x86efac, 1).setOrigin(0, 0.5);
+    const cooldownBg = this.add.rectangle(0, height / 2 + 8, width, 3, 0x111827, 0);
+    cooldownBg.setVisible(false);
+    const cooldown = this.add.rectangle(-width / 2, height / 2 + 8, width, 3, 0x111827, 0).setOrigin(0, 0.5);
+    cooldown.setVisible(false);
 
-    container.add([selection, base, hpBg, hp]);
-    const bundle = { container, base, hp, selection };
+    container.add([selection, base, hpBg, hp, cooldownBg, cooldown]);
+    const bundle = { container, base, hp, cooldown, cooldownBg, selection, lastHp: building.hp, flashUntil: 0 };
     this.visuals.set(building.id, bundle);
     return bundle;
+  }
+
+  private drawCombatOverlays() {
+    if (!this.combatGraphics || !this.rangeGraphics) {
+      return;
+    }
+
+    const combatGraphics = this.combatGraphics;
+    const rangeGraphics = this.rangeGraphics;
+
+    combatGraphics.clear();
+    rangeGraphics.clear();
+
+    const selectedUnits = this.session.getSelection().units;
+    if (selectedUnits.length === 0) {
+      return;
+    }
+
+    const tileSize = this.session.config.tileSize;
+
+    selectedUnits.slice(0, 8).forEach((unit) => {
+      const unitConfig = getUnitConfig(this.session.config, unit.factionId, unit.unitTypeId);
+      rangeGraphics.lineStyle(1.5, 0x93c5fd, 0.28);
+      rangeGraphics.strokeCircle(
+        unit.x * tileSize,
+        unit.y * tileSize,
+        unitConfig.range * tileSize,
+      );
+
+      if (!unit.order.targetId) {
+        return;
+      }
+
+      const target = this.session.state.sim.units[unit.order.targetId] ?? this.session.state.sim.buildings[unit.order.targetId];
+      if (!target) {
+        return;
+      }
+
+      const targetX = isBuildingState(target)
+        ? (target.tileX + getBuildingConfig(this.session.config, target.factionId, target.buildingTypeId).footprint.width / 2) * tileSize
+        : target.x * tileSize;
+      const targetY = isBuildingState(target)
+        ? (target.tileY + getBuildingConfig(this.session.config, target.factionId, target.buildingTypeId).footprint.height / 2) * tileSize
+        : target.y * tileSize;
+      const ready = unit.cooldownRemaining === 0;
+
+      combatGraphics.lineStyle(ready ? 2.4 : 1.4, ready ? 0xf97316 : 0xfbbf24, ready ? 0.92 : 0.55);
+      combatGraphics.lineBetween(unit.x * tileSize, unit.y * tileSize, targetX, targetY);
+      combatGraphics.lineStyle(2, ready ? 0xfb7185 : 0xfda4af, 0.85);
+      combatGraphics.strokeCircle(targetX, targetY, tileSize * 0.38);
+    });
   }
 
   private drawSelectionBox() {

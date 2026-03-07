@@ -7,7 +7,7 @@ import {
   getPlayerUnits,
   getUnitConfig,
 } from './config';
-import { createBlockedSet, findBuildSite, findPath, nearestReachablePoint, toTileKey } from './pathfinding';
+import { createBlockedSet, findBestReachablePath, findBuildSite, findPath, nearestReachablePoint, toTileKey } from './pathfinding';
 import type {
   AttackCommand,
   BuildCommand,
@@ -287,8 +287,67 @@ function formationTargets(target: GridPoint, count: number) {
   return offsets;
 }
 
-function applyMoveCommand(sim: SimulationState, config: GameConfig, command: MoveCommand) {
+function roundedPoint(position: { x: number; y: number }): GridPoint {
+  return {
+    x: Math.round(position.x),
+    y: Math.round(position.y),
+  };
+}
+
+function isPathWaypointBlocked(blocked: Set<string>, path: GridPoint[]) {
+  const next = path[0];
+  return Boolean(next && blocked.has(toTileKey(next.x, next.y)));
+}
+
+function getPathSearchRadius(config: GameConfig, preferredRadius: number) {
+  return Math.max(8, preferredRadius, Math.ceil(Math.max(config.map.width, config.map.height) * 0.3));
+}
+
+function planPathToDestination(
+  sim: SimulationState,
+  config: GameConfig,
+  unit: UnitState,
+  destination: GridPoint,
+  maxDistanceFromTarget = Number.POSITIVE_INFINITY,
+  preferredSearchRadius = 10,
+) {
   const blocked = createBlockedSet(config, sim);
+  const origin = roundedPoint(unit);
+  const result = findBestReachablePath(
+    config,
+    blocked,
+    origin,
+    destination,
+    getPathSearchRadius(config, preferredSearchRadius),
+    maxDistanceFromTarget,
+  );
+
+  return {
+    blocked,
+    destination: result?.point ?? destination,
+    path: result?.path ?? [],
+  };
+}
+
+function shouldRefreshOrderPath(
+  sim: SimulationState,
+  config: GameConfig,
+  path: GridPoint[],
+  blocked: Set<string>,
+  allowPeriodicRefresh = true,
+) {
+  if (path.length === 0) {
+    return true;
+  }
+
+  if (isPathWaypointBlocked(blocked, path)) {
+    return true;
+  }
+
+  return allowPeriodicRefresh && sim.tick % config.ai.pathRepathInterval === 0;
+}
+
+function applyMoveCommand(sim: SimulationState, config: GameConfig, command: MoveCommand) {
   const targets = formationTargets(command.target, command.unitIds.length);
 
   command.unitIds.forEach((unitId, index) => {
@@ -297,24 +356,24 @@ function applyMoveCommand(sim: SimulationState, config: GameConfig, command: Mov
       return;
     }
 
-    const destination = nearestReachablePoint(config, blocked, targets[index] ?? command.target) ?? command.target;
-    const path = findPath(
+    const plan = planPathToDestination(
+      sim,
       config,
-      blocked,
-      { x: Math.round(unit.x), y: Math.round(unit.y) },
-      destination,
+      unit,
+      targets[index] ?? command.target,
+      Number.POSITIVE_INFINITY,
+      12,
     );
 
     unit.order = {
       kind: 'move',
-      target: destination,
-      path,
+      target: plan.destination,
+      path: plan.path,
     };
   });
 }
 
 function applyAttackCommand(sim: SimulationState, config: GameConfig, command: AttackCommand) {
-  const blocked = createBlockedSet(config, sim);
   const targets = formationTargets(command.target, command.unitIds.length);
 
   command.unitIds.forEach((unitId, index) => {
@@ -324,25 +383,38 @@ function applyAttackCommand(sim: SimulationState, config: GameConfig, command: A
     }
 
     if (command.targetId) {
+      const unitConfig = getUnitConfig(config, unit.factionId, unit.unitTypeId);
+      const targetPosition = getEntityPosition(sim, config, command.targetId) ?? command.target;
+      const plan = planPathToDestination(
+        sim,
+        config,
+        unit,
+        roundedPoint(targetPosition),
+        unitConfig.range,
+        Math.max(10, Math.ceil(unitConfig.range) + 8),
+      );
+
       unit.order = {
         kind: 'attack-target',
         targetId: command.targetId,
-        target: command.target,
-        path: [],
+        target: roundedPoint(targetPosition),
+        path: plan.path,
       };
       return;
     }
 
-    const destination = nearestReachablePoint(config, blocked, targets[index] ?? command.target) ?? command.target;
+    const plan = planPathToDestination(
+      sim,
+      config,
+      unit,
+      targets[index] ?? command.target,
+      Number.POSITIVE_INFINITY,
+      12,
+    );
     unit.order = {
       kind: 'attack-move',
-      target: destination,
-      path: findPath(
-        config,
-        blocked,
-        { x: Math.round(unit.x), y: Math.round(unit.y) },
-        destination,
-      ),
+      target: plan.destination,
+      path: plan.path,
     };
   });
 }
@@ -592,19 +664,24 @@ function retargetPath(
   config: GameConfig,
   unit: UnitState,
   destination: GridPoint,
+  maxDistanceFromTarget = Number.POSITIVE_INFINITY,
+  preferredSearchRadius = 10,
 ) {
-  const blocked = createBlockedSet(config, sim);
-  const target = nearestReachablePoint(config, blocked, destination) ?? destination;
-  unit.order.path = findPath(
+  const plan = planPathToDestination(
+    sim,
     config,
-    blocked,
-    { x: Math.round(unit.x), y: Math.round(unit.y) },
-    target,
+    unit,
+    destination,
+    maxDistanceFromTarget,
+    preferredSearchRadius,
   );
+  unit.order.target = plan.destination;
+  unit.order.path = plan.path;
 }
 
 function updateWorkerOrder(sim: SimulationState, config: GameConfig, unit: UnitState) {
   const unitConfig = getUnitConfig(config, unit.factionId, unit.unitTypeId);
+  const refineryDropoffRange = 3.2;
   if (unitConfig.role !== 'worker') {
     return;
   }
@@ -622,7 +699,8 @@ function updateWorkerOrder(sim: SimulationState, config: GameConfig, unit: UnitS
 
     const resourcePoint = { x: Math.round(resource.x), y: Math.round(resource.y) };
     if (distance(unit, resource) > 0.8) {
-      if (unit.order.path.length === 0) {
+      const blocked = createBlockedSet(config, sim);
+      if (shouldRefreshOrderPath(sim, config, unit.order.path, blocked, false)) {
         retargetPath(sim, config, unit, resourcePoint);
       }
       moveUnitAlongPath(unit, config);
@@ -646,9 +724,10 @@ function updateWorkerOrder(sim: SimulationState, config: GameConfig, unit: UnitS
     }
 
     const returnPoint = centerOfBuilding(refinery, config);
-    if (distance(unit, returnPoint) > 2.2) {
-      if (unit.order.path.length === 0) {
-        retargetPath(sim, config, unit, { x: Math.round(returnPoint.x), y: Math.round(returnPoint.y) });
+    if (distance(unit, returnPoint) > refineryDropoffRange) {
+      const blocked = createBlockedSet(config, sim);
+      if (shouldRefreshOrderPath(sim, config, unit.order.path, blocked, false)) {
+        retargetPath(sim, config, unit, roundedPoint(returnPoint), refineryDropoffRange, 10);
       }
       moveUnitAlongPath(unit, config);
       return;
@@ -680,7 +759,17 @@ function updateUnitCombat(sim: SimulationState, config: GameConfig, unit: UnitSt
       return;
     }
 
-    retargetPath(sim, config, unit, { x: Math.round(targetPosition.x), y: Math.round(targetPosition.y) });
+    const blocked = createBlockedSet(config, sim);
+    if (shouldRefreshOrderPath(sim, config, unit.order.path, blocked)) {
+      retargetPath(
+        sim,
+        config,
+        unit,
+        roundedPoint(targetPosition),
+        unitConfig.range,
+        Math.max(10, Math.ceil(unitConfig.range) + 8),
+      );
+    }
     moveUnitAlongPath(unit, config);
     return;
   }
@@ -701,7 +790,8 @@ function updateUnitCombat(sim: SimulationState, config: GameConfig, unit: UnitSt
   }
 
   if (unit.order.kind === 'move' || unit.order.kind === 'attack-move') {
-    if (unit.order.path.length === 0 && unit.order.target) {
+    const blocked = createBlockedSet(config, sim);
+    if (unit.order.target && shouldRefreshOrderPath(sim, config, unit.order.path, blocked)) {
       retargetPath(sim, config, unit, unit.order.target);
     }
     moveUnitAlongPath(unit, config);
@@ -807,6 +897,7 @@ function runAiTurn(state: GameState, config: GameConfig, playerId: PlayerId) {
   const enemyUnits = getPlayerUnits(state.sim.units, enemyId);
   const workerCount = playerUnits.filter((u) => u.unitTypeId === 'courier').length;
   const combatUnits = playerUnits.filter((u) => u.unitTypeId !== 'courier');
+  const readyCombatUnits = combatUnits.filter((u) => u.order.kind === 'idle' || u.order.kind === 'move');
 
   const hq = playerBuildings.find((b) => b.buildingTypeId === 'command-core');
   const baseCenter = hq ? centerOfBuilding(hq, config) : spawn.hq;
@@ -930,6 +1021,20 @@ function runAiTurn(state: GameState, config: GameConfig, playerId: PlayerId) {
     });
   }
 
+  const stagingPoint = {
+    x: Math.round((baseCenter.x + spawn.rally.x) / 2),
+    y: Math.round((baseCenter.y + spawn.rally.y) / 2),
+  };
+  const pressureGroup = readyCombatUnits.filter((unit) => distance(unit, stagingPoint) > 3.5);
+  if (combatUnits.length >= 2 && threats.length === 0 && pressureGroup.length > 0) {
+    applyMoveCommand(state.sim, config, {
+      type: 'move',
+      playerId,
+      unitIds: pressureGroup.slice(0, 2).map((unit) => unit.id),
+      target: stagingPoint,
+    });
+  }
+
   // --- ATTACK: smarter decisions ---
   const enemyBuildings = getPlayerBuildings(state.sim.buildings, enemyId);
   const enemyHQ = enemyBuildings.find((b) => getBuildingConfig(config, b.factionId, b.buildingTypeId).isHQ);
@@ -937,8 +1042,7 @@ function runAiTurn(state: GameState, config: GameConfig, playerId: PlayerId) {
 
   // Keep a defensive reserve
   const reserveSize = Math.max(1, Math.floor(combatUnits.length * config.ai.reserveRatio));
-  const attackForce = combatUnits
-    .filter((u) => u.order.kind === 'idle' || u.order.kind === 'move')
+  const attackForce = readyCombatUnits
     .sort((a, b) => {
       const aConf = getUnitConfig(config, a.factionId, a.unitTypeId);
       const bConf = getUnitConfig(config, b.factionId, b.unitTypeId);
@@ -952,8 +1056,12 @@ function runAiTurn(state: GameState, config: GameConfig, playerId: PlayerId) {
 
   const shouldAttack =
     availableForAttack.length >= config.ai.attackThreshold &&
-    state.sim.tick - player.lastAttackTick >= config.tickRate * 6 &&
-    (availableForAttack.length > enemyCombatCount * 0.8 || availableForAttack.length >= 8);
+    state.sim.tick - player.lastAttackTick >= config.tickRate * 5 &&
+    (
+      availableForAttack.length >= Math.max(2, enemyCombatCount) ||
+      availableForAttack.length >= config.ai.attackThreshold + 2 ||
+      state.sim.tick >= config.tickRate * 70
+    );
 
   if (shouldAttack && availableForAttack.length > 0) {
     // Target priority: nearest enemy building, or HQ as fallback

@@ -41,6 +41,8 @@ export interface HudModel {
   modeLabel: string;
   selectionTitle: string;
   selectionDetail: string;
+  selectionTarget: string | null;
+  selectionCombatDetail: string | null;
   buildActions: HudAction[];
   trainActions: HudAction[];
   armyOverview: ArmyEntry[];
@@ -264,6 +266,8 @@ export class BattleSession {
       modeLabel: getModeLabel(this.state.render.commandMode, this.state.render.placementPreview),
       selectionTitle: describeSelection(selection, this.config),
       selectionDetail: describeSelectionDetail(selection, this.config),
+      selectionTarget: describeSelectionTarget(this.state, this.config, selection),
+      selectionCombatDetail: describeSelectionCombat(this.state, this.config, selection),
       buildActions: faction.availableBuildingIds
         .filter((buildingTypeId) => buildingTypeId !== 'command-core')
         .map((buildingTypeId) => {
@@ -383,6 +387,69 @@ function describeSelectionDetail(selection: SelectionSummary, config: GameConfig
   }
 
   return 'Select a factory to train units or use the build column to place structures.';
+}
+
+function describeEntityName(state: GameState, config: GameConfig, entityId: string) {
+  const unit = state.sim.units[entityId];
+  if (unit) {
+    return getUnitConfig(config, unit.factionId, unit.unitTypeId).name;
+  }
+
+  const building = state.sim.buildings[entityId];
+  if (building) {
+    return getBuildingConfig(config, building.factionId, building.buildingTypeId).name;
+  }
+
+  return null;
+}
+
+function describeSelectionTarget(state: GameState, config: GameConfig, selection: SelectionSummary) {
+  if (selection.units.length !== 1 || selection.buildings.length > 0) {
+    return null;
+  }
+
+  const unit = selection.units[0];
+  if (unit.order.targetId) {
+    const entityName = describeEntityName(state, config, unit.order.targetId);
+    return entityName ? `Target locked: ${entityName}` : 'Target lock lost';
+  }
+
+  if ((unit.order.kind === 'move' || unit.order.kind === 'attack-move') && unit.order.target) {
+    const label = unit.order.kind === 'attack-move' ? 'Attack lane' : 'Move lane';
+    return `${label}: ${unit.order.target.x},${unit.order.target.y}`;
+  }
+
+  return null;
+}
+
+function describeSelectionCombat(_state: GameState, config: GameConfig, selection: SelectionSummary) {
+  if (selection.units.length === 1 && selection.buildings.length === 0) {
+    const unit = selection.units[0];
+    const unitConfig = getUnitConfig(config, unit.factionId, unit.unitTypeId);
+    const cooldownLabel = unit.cooldownRemaining === 0
+      ? 'Weapons ready'
+      : `Reload ${unit.cooldownRemaining}/${unitConfig.attackCooldown}`;
+    return `Range ${unitConfig.range.toFixed(1)} | ${cooldownLabel}`;
+  }
+
+  if (selection.units.length > 1) {
+    const readyCount = selection.units.filter((unit) => unit.cooldownRemaining === 0).length;
+    const attackOrders = selection.units.filter((unit) => unit.order.kind === 'attack-target').length;
+    return `${readyCount}/${selection.units.length} ready | ${attackOrders} tracking targets`;
+  }
+
+  if (selection.buildings.length === 1) {
+    const building = selection.buildings[0];
+    const buildingConfig = getBuildingConfig(config, building.factionId, building.buildingTypeId);
+    if (buildingConfig.attackRange && buildingConfig.attackCooldown) {
+      const cooldownLabel = building.cooldownRemaining === 0
+        ? 'Defense ready'
+        : `Reload ${building.cooldownRemaining}/${buildingConfig.attackCooldown}`;
+      return `Range ${buildingConfig.attackRange.toFixed(1)} | ${cooldownLabel}`;
+    }
+  }
+
+  return null;
 }
 
 function buildArmyOverview(state: GameState, config: GameConfig, playerId: PlayerId): ArmyEntry[] {

@@ -254,6 +254,14 @@ p {
   font-style: italic;
 }
 
+.selection-meta {
+  font-size: 0.78rem;
+  color: #9fc4e6;
+  padding: 7px 9px;
+  border-left: 2px solid rgba(96, 165, 250, 0.45);
+  background: rgba(15, 27, 39, 0.72);
+}
+
 /* Production queue */
 .queue-item {
   display: grid;
