@@ -42,4 +42,35 @@ describe('controller', () => {
 
     expect(model.incomePerSecond).toBe(42);
   });
+
+  it('exposes projected income, pending payout, and active workers in the HUD model', () => {
+    const session = new BattleSession(defaultGameConfig);
+    const playerCourier = Object.values(session.state.sim.units).find(
+      (unit) => unit.ownerId === 'player' && unit.unitTypeId === 'courier',
+    );
+    const playerRefinery = Object.values(session.state.sim.buildings).find(
+      (building) => building.ownerId === 'player' && building.buildingTypeId === 'refinery',
+    );
+    const oreField = Object.values(session.state.sim.resources)[0];
+
+    if (!playerCourier || !playerRefinery || !oreField) {
+      throw new Error('Expected default economy setup');
+    }
+
+    playerCourier.order = {
+      kind: 'harvest',
+      path: [],
+      resourceId: oreField.id,
+      refineryId: playerRefinery.id,
+    };
+    playerCourier.x = oreField.x;
+    playerCourier.y = oreField.y;
+    session.state.sim.players.player.pendingIncome = 24;
+
+    const model = session.getHudModel();
+
+    expect(model.pendingIncome).toBe(24);
+    expect(model.activeWorkers).toBeGreaterThan(0);
+    expect(model.projectedIncomePerSecond).toBeGreaterThan(0);
+  });
 });

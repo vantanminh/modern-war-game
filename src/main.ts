@@ -24,8 +24,28 @@ app.innerHTML = `
       <aside class="panel panel-left">
         <section>
           <p class="panel-label">Economy</p>
-          <h2 id="resource-count">0</h2>
-          <p id="income-rate" class="economy-meta">+0 credits / sec</p>
+          <div class="economy-headline">
+            <h2 id="resource-count">0</h2>
+            <span id="payout-badge" class="economy-badge hidden"></span>
+          </div>
+          <div class="economy-stats">
+            <div class="economy-row">
+              <span>Realized</span>
+              <strong id="income-rate">+0 / sec</strong>
+            </div>
+            <div class="economy-row">
+              <span>Projected</span>
+              <strong id="projected-income">~0 / sec</strong>
+            </div>
+            <div class="economy-row">
+              <span>Incoming</span>
+              <strong id="pending-income">0 next payout</strong>
+            </div>
+            <div class="economy-row">
+              <span>Couriers</span>
+              <strong id="worker-count">0 active</strong>
+            </div>
+          </div>
           <p id="status-line">Initializing battlefield...</p>
         </section>
         <section>
@@ -102,6 +122,10 @@ const menuOverlay = document.querySelector<HTMLDivElement>('#menu-overlay')!;
 const endOverlay = document.querySelector<HTMLDivElement>('#end-overlay')!;
 const resourceCount = document.querySelector<HTMLHeadingElement>('#resource-count')!;
 const incomeRate = document.querySelector<HTMLParagraphElement>('#income-rate')!;
+const projectedIncome = document.querySelector<HTMLParagraphElement>('#projected-income')!;
+const pendingIncome = document.querySelector<HTMLParagraphElement>('#pending-income')!;
+const workerCount = document.querySelector<HTMLParagraphElement>('#worker-count')!;
+const payoutBadge = document.querySelector<HTMLSpanElement>('#payout-badge')!;
 const selectionTitle = document.querySelector<HTMLHeadingElement>('#selection-title')!;
 const selectionDetail = document.querySelector<HTMLParagraphElement>('#selection-detail')!;
 const selectionTarget = document.querySelector<HTMLParagraphElement>('#selection-target')!;
@@ -122,6 +146,8 @@ const trainActionButtons = new Map<string, HTMLButtonElement>();
 
 let phaserGame: import('phaser').Game | null = null;
 let session: BattleSession | null = null;
+let lastRenderedResources = 0;
+let payoutBadgeTimeout: number | null = null;
 
 type ActionHandler = (actionId: string) => void;
 
@@ -267,6 +293,14 @@ async function mountBattle() {
   gameRoot.innerHTML = '';
 
   session = new BattleSession();
+  lastRenderedResources = session.state.sim.players.player.resources;
+  if (payoutBadgeTimeout !== null) {
+    window.clearTimeout(payoutBadgeTimeout);
+    payoutBadgeTimeout = null;
+  }
+  payoutBadge.classList.add('hidden');
+  payoutBadge.textContent = '';
+  resourceCount.classList.remove('economy-total-flash');
   session.subscribe(() => renderHud());
 
   phaserGame = new Phaser.Game({
@@ -302,8 +336,32 @@ function renderHud() {
 
   const model = session.getHudModel();
   const tickRate = session.config.tickRate;
+  const payoutDelta = model.resources - lastRenderedResources;
+
   resourceCount.textContent = `${model.resources} credits`;
-  incomeRate.textContent = `+${model.incomePerSecond} credits / sec`;
+  incomeRate.textContent = `+${model.incomePerSecond} / sec`;
+  projectedIncome.textContent = `~${model.projectedIncomePerSecond} / sec`;
+  pendingIncome.textContent = model.pendingIncome > 0 ? `${model.pendingIncome} next payout` : '0 queued';
+  workerCount.textContent = `${model.activeWorkers} active`;
+
+  if (payoutDelta > 0) {
+    payoutBadge.textContent = `+${payoutDelta}`;
+    payoutBadge.classList.remove('hidden');
+    resourceCount.classList.remove('economy-total-flash');
+    void resourceCount.offsetWidth;
+    resourceCount.classList.add('economy-total-flash');
+
+    if (payoutBadgeTimeout !== null) {
+      window.clearTimeout(payoutBadgeTimeout);
+    }
+
+    payoutBadgeTimeout = window.setTimeout(() => {
+      payoutBadge.classList.add('hidden');
+      resourceCount.classList.remove('economy-total-flash');
+    }, 900);
+  }
+
+  lastRenderedResources = model.resources;
   selectionTitle.textContent = model.selectionTitle;
   selectionDetail.textContent = model.selectionDetail;
   selectionTarget.textContent = model.selectionTarget ?? '';

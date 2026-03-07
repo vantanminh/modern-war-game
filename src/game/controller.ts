@@ -9,6 +9,7 @@ import type {
   PlacementPreview,
   PlayerId,
   SelectionSummary,
+  UnitState,
 } from './types';
 
 export interface HudAction {
@@ -35,6 +36,9 @@ export interface QueueEntry {
 export interface HudModel {
   resources: number;
   incomePerSecond: number;
+  projectedIncomePerSecond: number;
+  pendingIncome: number;
+  activeWorkers: number;
   enemyResources: number;
   tick: number;
   paused: boolean;
@@ -251,12 +255,16 @@ export class BattleSession {
     const player = this.state.sim.players.player;
     const enemy = this.state.sim.players.enemy;
     const faction = this.config.factions[player.factionId];
+    const economy = buildEconomySnapshot(this.state, this.config, 'player');
     const selectedBuilding =
       selection.buildings.length === 1 && selection.units.length === 0 ? selection.buildings[0] : null;
 
     return {
       resources: player.resources,
       incomePerSecond: player.incomePerSecond,
+      projectedIncomePerSecond: economy.projectedIncomePerSecond,
+      pendingIncome: player.pendingIncome,
+      activeWorkers: economy.activeWorkers,
       enemyResources: enemy.resources,
       tick: this.state.sim.tick,
       paused: this.paused,
@@ -294,6 +302,75 @@ export class BattleSession {
       enemyBuildingCount: getPlayerBuildings(this.state.sim.buildings, 'enemy').length,
     };
   }
+}
+
+function distance(a: { x: number; y: number }, b: { x: number; y: number }) {
+  return Math.hypot(a.x - b.x, a.y - b.y);
+}
+
+function centerOfBuilding(building: BuildingState, config: GameConfig) {
+  const buildingConfig = getBuildingConfig(config, building.factionId, building.buildingTypeId);
+
+  return {
+    x: building.tileX + buildingConfig.footprint.width / 2,
+    y: building.tileY + buildingConfig.footprint.height / 2,
+  };
+}
+
+function estimateWorkerIncomePerSecond(state: GameState, config: GameConfig, unit: UnitState) {
+  const unitConfig = getUnitConfig(config, unit.factionId, unit.unitTypeId);
+  const carryCapacity = unitConfig.carryCapacity ?? 0;
+  const harvestRate = unitConfig.harvestRate ?? 0;
+  const speedPerTick = unitConfig.speed / config.tickRate;
+
+  if (unitConfig.role !== 'worker' || carryCapacity === 0 || harvestRate === 0 || speedPerTick === 0) {
+    return 0;
+  }
+
+  const refinery = unit.order.refineryId ? state.sim.buildings[unit.order.refineryId] : undefined;
+  if (!refinery || refinery.constructionRemaining > 0) {
+    return 0;
+  }
+
+  const refineryPoint = centerOfBuilding(refinery, config);
+
+  if (unit.order.kind === 'return' && unit.cargo > 0) {
+    const returnTicks = Math.max(1, Math.ceil(Math.max(0, distance(unit, refineryPoint) - 3.2) / speedPerTick));
+    return (unit.cargo / returnTicks) * config.tickRate;
+  }
+
+  const resource = unit.order.resourceId ? state.sim.resources[unit.order.resourceId] : undefined;
+  if (!resource || resource.amount <= 0) {
+    return 0;
+  }
+
+  const resourcePoint = { x: Math.round(resource.x), y: Math.round(resource.y) };
+  const remainingCapacity = Math.max(0, carryCapacity - unit.cargo);
+  const gatherTicks = remainingCapacity === 0 ? 0 : Math.ceil(remainingCapacity / harvestRate);
+  const travelToResourceTicks = Math.ceil(Math.max(0, distance(unit, resourcePoint) - 0.8) / speedPerTick);
+  const travelToRefineryTicks = Math.ceil(Math.max(0, distance(resourcePoint, refineryPoint) - 3.2) / speedPerTick);
+  const cycleTicks = Math.max(1, gatherTicks + travelToResourceTicks + travelToRefineryTicks);
+  const deliveryAmount = Math.min(carryCapacity, unit.cargo + remainingCapacity);
+
+  return (deliveryAmount / cycleTicks) * config.tickRate;
+}
+
+function buildEconomySnapshot(state: GameState, config: GameConfig, playerId: PlayerId) {
+  const workers = getPlayerUnits(state.sim.units, playerId).filter((unit) => {
+    const unitConfig = getUnitConfig(config, unit.factionId, unit.unitTypeId);
+    return unitConfig.role === 'worker';
+  });
+
+  const activeWorkers = workers.filter((unit) => unit.order.kind === 'harvest' || unit.order.kind === 'return' || unit.cargo > 0).length;
+  const projectedIncomePerSecond = Math.round(workers.reduce(
+    (sum, unit) => sum + estimateWorkerIncomePerSecond(state, config, unit),
+    0,
+  ));
+
+  return {
+    activeWorkers,
+    projectedIncomePerSecond,
+  };
 }
 
 function getModeLabel(mode: CommandMode, preview: PlacementPreview | null) {
