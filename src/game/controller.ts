@@ -51,6 +51,7 @@ export interface HudModel {
   mapSizeLabel: string;
   selectionCount: number;
   modeLabel: string;
+  modeHint: string | null;
   selectionTitle: string;
   selectionDetail: string;
   selectionTarget: string | null;
@@ -389,7 +390,8 @@ export class BattleSession {
           ? 'Victory'
           : 'Defeat'
         : null,
-      modeLabel: getModeLabel(this.state.render.commandMode, this.state.render.placementPreview),
+      modeLabel: getModeLabel(this.state.render.commandMode, this.state.render.placementPreview, this.config, player.factionId),
+      modeHint: getModeHint(this.state.render.commandMode, this.state.render.placementPreview),
       selectionTitle: describeSelection(selection, this.config),
       selectionDetail: describeSelectionDetail(selection, this.config),
       selectionTarget: describeSelectionTarget(this.state, this.config, selection),
@@ -493,18 +495,30 @@ function buildEconomySnapshot(state: GameState, config: GameConfig, playerId: Pl
   };
 }
 
-function getModeLabel(mode: CommandMode, preview: PlacementPreview | null) {
+function getModeLabel(mode: CommandMode, preview: PlacementPreview | null, config: GameConfig, factionId: string): string {
   if (mode === 'attack-move') {
-    return 'Attack-move primed. Right click to commit, Esc to cancel.';
+    return 'Attack-move';
   }
 
   if (mode === 'build' && preview) {
-    const placementState = preview.valid ? 'ready' : 'blocked';
-    const placementHint = preview.reason ? ` ${preview.reason}` : '';
-    return `Placing ${preview.buildingTypeId} at ${preview.tileX},${preview.tileY} (${placementState}).${placementHint}`;
+    const buildingConfig = getBuildingConfig(config, factionId, preview.buildingTypeId);
+    return `Place: ${buildingConfig.name}`;
   }
 
-  return 'Standard orders: drag to select, Shift adds, right click issues orders, Esc clears.';
+  return 'Standing by';
+}
+
+function getModeHint(mode: CommandMode, preview: PlacementPreview | null): string | null {
+  if (mode === 'attack-move') {
+    return 'Right-click to commit · Esc to cancel';
+  }
+
+  if (mode === 'build' && preview) {
+    if (!preview.valid && preview.reason) return `Blocked: ${preview.reason}`;
+    return preview.valid ? 'Left-click to place · Esc to cancel' : 'No valid placement here';
+  }
+
+  return null;
 }
 
 function describeSelection(selection: SelectionSummary, config: GameConfig) {

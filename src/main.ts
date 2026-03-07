@@ -1,5 +1,5 @@
 import './style.css';
-import { createLanMatchConfig, defaultGameConfig, getBuildingConfig } from './game/config';
+import { createLanMatchConfig, defaultGameConfig } from './game/config';
 import { BattleSession } from './game/controller';
 import type { Command, GameConfig, SimulationState } from './game/types';
 
@@ -11,123 +11,85 @@ if (!app) {
 
 app.innerHTML = `
   <div class="shell">
-    <header class="topbar">
-      <div>
-        <p class="eyebrow">RTS Web Prototype</p>
+    <header class="top-strip">
+      <div class="strip-brand">
         <h1>Modern War</h1>
-        <p class="topbar-subtitle">${defaultGameConfig.map.name} · ${defaultGameConfig.map.width} x ${defaultGameConfig.map.height} battlefield</p>
+        <span id="battlefield-name" class="strip-map">${defaultGameConfig.map.name} · ${defaultGameConfig.map.width}×${defaultGameConfig.map.height}</span>
       </div>
-      <div class="topbar-actions">
-        <button class="chrome-button" id="pause-button" type="button">Pause</button>
-        <button class="chrome-button" id="restart-button" type="button">Restart</button>
-      </div>
-    </header>
-    <main class="board">
-      <aside class="panel panel-left">
-        <section>
-          <p class="panel-label">Economy</p>
-          <div class="economy-headline">
-            <h2 id="resource-count">0</h2>
+      <div class="strip-divider"></div>
+      <div class="strip-economy">
+        <div class="econ-stat">
+          <span class="econ-label">Credits</span>
+          <div class="econ-payout-wrap">
+            <strong id="resource-count" class="econ-val">0</strong>
             <span id="payout-badge" class="economy-badge hidden"></span>
           </div>
-          <div class="economy-stats">
-            <div class="economy-row">
-              <span>Realized</span>
-              <strong id="income-rate">+0 / sec</strong>
-            </div>
-            <div class="economy-row">
-              <span>Projected</span>
-              <strong id="projected-income">~0 / sec</strong>
-            </div>
-            <div class="economy-row">
-              <span>Incoming</span>
-              <strong id="pending-income">0 next payout</strong>
-            </div>
-            <div class="economy-row">
-              <span>Couriers</span>
-              <strong id="worker-count">0 active</strong>
-            </div>
-          </div>
-          <p id="status-line">Initializing battlefield...</p>
-        </section>
-        <section>
-          <p class="panel-label">Forces</p>
-          <div class="forces-grid">
-            <div class="force-col">
-              <span class="force-header player-color">You</span>
-              <div id="army-overview" class="army-list"></div>
-            </div>
-            <div class="force-col">
-              <span class="force-header enemy-color">Enemy</span>
-              <div id="enemy-army-overview" class="army-list"></div>
-            </div>
-          </div>
-        </section>
-        <section>
-          <p class="panel-label">Selection</p>
-          <h3 id="selection-title">No selection</h3>
-          <p id="selection-detail">Use left click or drag to select units.</p>
-          <p id="selection-target" class="selection-meta hidden"></p>
-          <p id="selection-combat" class="selection-meta hidden"></p>
-        </section>
-        <section id="queue-section" class="hidden">
-          <p class="panel-label">Production Queue</p>
-          <div id="queue-display"></div>
-        </section>
-      </aside>
-      <section class="viewport">
-        <div class="battle-ribbon">
-          <div class="battle-chip battle-chip-primary">
-            <span class="battle-chip-label">Theater</span>
-            <strong id="battlefield-name">${defaultGameConfig.map.name}</strong>
-          </div>
-          <div class="battle-chip">
-            <span class="battle-chip-label">Orders</span>
-            <strong id="mode-chip">Standing by</strong>
-          </div>
-          <div class="battle-chip">
-            <span class="battle-chip-label">Deposits</span>
-            <strong id="resource-sites">0 online</strong>
-          </div>
-          <div class="battle-chip">
-            <span class="battle-chip-label">Selection</span>
-            <strong id="selection-count">0 active</strong>
-          </div>
         </div>
+        <div class="econ-stat">
+          <span class="econ-label">Income</span>
+          <strong id="income-rate" class="econ-val">+0/s</strong>
+        </div>
+        <div class="econ-stat">
+          <span class="econ-label">Deposits</span>
+          <strong id="resource-sites" class="econ-val">0</strong>
+        </div>
+        <div class="econ-stat">
+          <span class="econ-label">Couriers</span>
+          <strong id="worker-count" class="econ-val">0</strong>
+        </div>
+      </div>
+      <div class="strip-divider"></div>
+      <div class="strip-mode">
+        <span id="mode-chip" class="mode-badge">Standing by</span>
+        <span id="mode-hint" class="mode-hint hidden"></span>
+      </div>
+      <div class="strip-spacer"></div>
+      <span id="timer-display" class="timer-display">0:00</span>
+      <div class="strip-divider"></div>
+      <div class="strip-controls">
+        <button class="chrome-button" id="pause-button" type="button">Pause</button>
+        <button class="chrome-button" id="restart-button" type="button">Restart</button>
+        <button class="chrome-button" id="help-toggle" type="button" title="Controls (H)">?</button>
+      </div>
+    </header>
+    <main class="stage">
+      <div class="viewport">
         <div id="game-root"></div>
-        <div class="overlay overlay-center" id="menu-overlay">
+        <div class="overlay" id="menu-overlay">
           <div class="overlay-card">
             <p class="eyebrow">Battle Setup</p>
             <h2>${defaultGameConfig.map.name}</h2>
-            <p>Đấu LAN hỗ trợ 2 đến 4 team: 1 máy làm host, máy khác vào bằng URL IP nội bộ.</p>
-            <button class="primary-button" id="start-button" type="button">Start Skirmish (Solo)</button>
-            <div class="lan-card">
-              <label class="lan-field">
-                <span>WebSocket URL</span>
-                <input id="lan-url" type="text" value="ws://127.0.0.1:8787" />
-              </label>
-              <label class="lan-field">
-                <span>Room ID</span>
-                <input id="lan-room" type="text" value="lan-room" />
-              </label>
-              <label class="lan-field">
-                <span>Số team</span>
-                <select id="lan-team-count">
-                  <option value="2" selected>2 teams</option>
-                  <option value="3">3 teams</option>
-                  <option value="4">4 teams</option>
-                </select>
-              </label>
-              <div class="lan-actions">
-                <button class="chrome-button" id="lan-host-button" type="button">Host LAN</button>
-                <button class="chrome-button" id="lan-join-button" type="button">Join LAN</button>
-                <button class="primary-button" id="lan-start-button" type="button" disabled>Start Match</button>
+            <button class="primary-button" id="start-button" type="button">Start Skirmish</button>
+            <details class="lan-section">
+              <summary class="lan-summary">LAN Multiplayer</summary>
+              <div class="lan-card">
+                <label class="lan-field">
+                  <span>WebSocket URL</span>
+                  <input id="lan-url" type="text" value="ws://127.0.0.1:8787" />
+                </label>
+                <label class="lan-field">
+                  <span>Room ID</span>
+                  <input id="lan-room" type="text" value="lan-room" />
+                </label>
+                <label class="lan-field">
+                  <span>Teams</span>
+                  <select id="lan-team-count">
+                    <option value="2" selected>2 teams</option>
+                    <option value="3">3 teams</option>
+                    <option value="4">4 teams</option>
+                  </select>
+                </label>
+                <div class="lan-actions">
+                  <button class="chrome-button" id="lan-host-button" type="button">Host LAN</button>
+                  <button class="chrome-button" id="lan-join-button" type="button">Join LAN</button>
+                  <button class="primary-button" id="lan-start-button" type="button" disabled>Start Match</button>
+                </div>
+                <p id="lan-status">LAN status: idle.</p>
               </div>
-              <p id="lan-status">LAN status: idle.</p>
-            </div>
+            </details>
           </div>
         </div>
-        <div class="overlay overlay-center hidden" id="end-overlay">
+        <div class="overlay hidden" id="end-overlay">
           <div class="overlay-card">
             <p class="eyebrow" id="end-kicker">Battle Over</p>
             <h2 id="end-title">Victory</h2>
@@ -135,27 +97,63 @@ app.innerHTML = `
             <button class="primary-button" id="play-again-button" type="button">Play Again</button>
           </div>
         </div>
-        <div class="tips">
-          <span>Arrow keys pan</span>
-          <span>Mouse wheel zoom</span>
-          <span>Shift adds selection</span>
-          <span>A arms attack-move</span>
-          <span>C centers camera</span>
-          <span>Esc cancels mode</span>
-          <span>Space pauses</span>
+        <div class="overlay hidden" id="help-overlay">
+          <div class="overlay-card">
+            <p class="eyebrow">Controls</p>
+            <h2>How to Play</h2>
+            <ul class="help-list">
+              <li><kbd>Arrow keys</kbd> Pan camera</li>
+              <li><kbd>Mouse wheel</kbd> Zoom in / out</li>
+              <li><kbd>Middle drag</kbd> Pan camera</li>
+              <li><kbd>Left click</kbd> Select unit or building</li>
+              <li><kbd>Drag</kbd> Box-select units</li>
+              <li><kbd>Shift + click</kbd> Add to selection</li>
+              <li><kbd>Right-click</kbd> Move / attack / set rally</li>
+              <li><kbd>A</kbd> Arm attack-move</li>
+              <li><kbd>C</kbd> Center camera on selection</li>
+              <li><kbd>Esc</kbd> Cancel mode / deselect</li>
+              <li><kbd>Space</kbd> Pause / resume</li>
+            </ul>
+            <button class="primary-button" id="help-close" type="button">Close</button>
+          </div>
+        </div>
+      </div>
+    </main>
+    <footer class="command-deck">
+      <section class="deck-col">
+        <p class="panel-label">Selection</p>
+        <h3 id="selection-title">No selection</h3>
+        <p id="selection-detail" class="selection-detail-text">Click or drag to select units.</p>
+        <p id="selection-target" class="selection-meta hidden"></p>
+        <p id="selection-combat" class="selection-meta hidden"></p>
+      </section>
+      <div class="deck-actions">
+        <div class="deck-action-group">
+          <p class="panel-label">Build</p>
+          <div class="deck-action-row" id="build-actions"></div>
+        </div>
+        <div class="deck-action-group">
+          <p class="panel-label">Train</p>
+          <div class="deck-action-row" id="train-actions"></div>
+        </div>
+      </div>
+      <section class="deck-col">
+        <div id="queue-section" class="hidden">
+          <p class="panel-label">Queue</p>
+          <div id="queue-display"></div>
+        </div>
+        <div class="forces-compact">
+          <div class="force-row">
+            <span class="player-color">You</span>
+            <span id="player-force-count" class="force-count">—</span>
+          </div>
+          <div class="force-row">
+            <span class="enemy-color">Enemy</span>
+            <span id="enemy-force-count" class="force-count">—</span>
+          </div>
         </div>
       </section>
-      <aside class="panel panel-right">
-        <section>
-          <p class="panel-label">Construction</p>
-          <div class="action-grid" id="build-actions"></div>
-        </section>
-        <section>
-          <p class="panel-label">Production</p>
-          <div class="action-grid" id="train-actions"></div>
-        </section>
-      </aside>
-    </main>
+    </footer>
   </div>
 `;
 
@@ -171,32 +169,33 @@ const lanStatus = document.querySelector<HTMLParagraphElement>('#lan-status')!;
 const playAgainButton = document.querySelector<HTMLButtonElement>('#play-again-button')!;
 const restartButton = document.querySelector<HTMLButtonElement>('#restart-button')!;
 const pauseButton = document.querySelector<HTMLButtonElement>('#pause-button')!;
+const helpToggle = document.querySelector<HTMLButtonElement>('#help-toggle')!;
+const helpClose = document.querySelector<HTMLButtonElement>('#help-close')!;
+const helpOverlay = document.querySelector<HTMLDivElement>('#help-overlay')!;
 const menuOverlay = document.querySelector<HTMLDivElement>('#menu-overlay')!;
 const endOverlay = document.querySelector<HTMLDivElement>('#end-overlay')!;
-const resourceCount = document.querySelector<HTMLHeadingElement>('#resource-count')!;
-const incomeRate = document.querySelector<HTMLParagraphElement>('#income-rate')!;
-const projectedIncome = document.querySelector<HTMLParagraphElement>('#projected-income')!;
-const pendingIncome = document.querySelector<HTMLParagraphElement>('#pending-income')!;
-const workerCount = document.querySelector<HTMLParagraphElement>('#worker-count')!;
+const resourceCount = document.querySelector<HTMLElement>('#resource-count')!;
+const incomeRate = document.querySelector<HTMLElement>('#income-rate')!;
+const workerCount = document.querySelector<HTMLElement>('#worker-count')!;
 const payoutBadge = document.querySelector<HTMLSpanElement>('#payout-badge')!;
+const battlefieldName = document.querySelector<HTMLElement>('#battlefield-name')!;
+const modeChip = document.querySelector<HTMLElement>('#mode-chip')!;
+const modeHintEl = document.querySelector<HTMLElement>('#mode-hint')!;
+const timerDisplay = document.querySelector<HTMLElement>('#timer-display')!;
+const resourceSites = document.querySelector<HTMLElement>('#resource-sites')!;
 const selectionTitle = document.querySelector<HTMLHeadingElement>('#selection-title')!;
 const selectionDetail = document.querySelector<HTMLParagraphElement>('#selection-detail')!;
 const selectionTarget = document.querySelector<HTMLParagraphElement>('#selection-target')!;
 const selectionCombat = document.querySelector<HTMLParagraphElement>('#selection-combat')!;
-const statusLine = document.querySelector<HTMLParagraphElement>('#status-line')!;
 const buildActions = document.querySelector<HTMLDivElement>('#build-actions')!;
 const trainActions = document.querySelector<HTMLDivElement>('#train-actions')!;
 const endTitle = document.querySelector<HTMLHeadingElement>('#end-title')!;
 const endReason = document.querySelector<HTMLParagraphElement>('#end-reason')!;
 const endKicker = document.querySelector<HTMLParagraphElement>('#end-kicker')!;
-const armyOverview = document.querySelector<HTMLDivElement>('#army-overview')!;
-const enemyArmyOverview = document.querySelector<HTMLDivElement>('#enemy-army-overview')!;
 const queueSection = document.querySelector<HTMLElement>('#queue-section')!;
 const queueDisplay = document.querySelector<HTMLDivElement>('#queue-display')!;
-const battlefieldName = document.querySelector<HTMLElement>('#battlefield-name')!;
-const modeChip = document.querySelector<HTMLElement>('#mode-chip')!;
-const resourceSites = document.querySelector<HTMLElement>('#resource-sites')!;
-const selectionCount = document.querySelector<HTMLElement>('#selection-count')!;
+const playerForceCount = document.querySelector<HTMLElement>('#player-force-count')!;
+const enemyForceCount = document.querySelector<HTMLElement>('#enemy-force-count')!;
 
 const buildActionButtons = new Map<string, HTMLButtonElement>();
 const trainActionButtons = new Map<string, HTMLButtonElement>();
@@ -213,6 +212,23 @@ let lanTeamCount = 2;
 let lastSentTick = -1;
 let lastRenderedResources = 0;
 let payoutBadgeTimeout: number | null = null;
+
+// Block browser scroll keys and wheel when game is active
+const SCROLL_BLOCK_KEYS = new Set(['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight']);
+
+document.addEventListener('keydown', (e) => {
+  if (!session) return;
+  if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement || e.target instanceof HTMLTextAreaElement) return;
+  if (SCROLL_BLOCK_KEYS.has(e.code)) {
+    e.preventDefault();
+  }
+}, { capture: true });
+
+document.addEventListener('wheel', (e) => {
+  if (session) {
+    e.preventDefault();
+  }
+}, { passive: false });
 
 type ActionHandler = (actionId: string) => void;
 
@@ -288,7 +304,7 @@ function renderActionButtons(
       title.textContent = action.label;
     }
     if (meta) {
-      meta.textContent = `${action.cost} credits`;
+      meta.textContent = `${action.cost}¢`;
     }
 
     fragment.appendChild(button);
@@ -560,15 +576,12 @@ function renderHud() {
   const tickRate = session.config.tickRate;
   const payoutDelta = model.resources - lastRenderedResources;
 
-  resourceCount.textContent = `${model.resources} credits`;
-  incomeRate.textContent = `+${model.incomePerSecond} / sec`;
-  projectedIncome.textContent = `~${model.projectedIncomePerSecond} / sec`;
-  pendingIncome.textContent = model.pendingIncome > 0 ? `${model.pendingIncome} next payout` : '0 queued';
-  workerCount.textContent = `${model.activeWorkers} active`;
+  // Top strip — economy
+  resourceCount.textContent = `${model.resources}`;
+  incomeRate.textContent = `+${model.incomePerSecond}/s`;
+  workerCount.textContent = `${model.activeWorkers}`;
+  resourceSites.textContent = `${model.activeResourceNodes}`;
   battlefieldName.textContent = `${model.mapName} · ${model.mapSizeLabel}`;
-  modeChip.textContent = model.modeLabel;
-  resourceSites.textContent = `${model.activeResourceNodes} online`;
-  selectionCount.textContent = model.selectionCount > 0 ? `${model.selectionCount} active` : '0 active';
 
   if (payoutDelta > 0) {
     payoutBadge.textContent = `+${payoutDelta}`;
@@ -588,25 +601,35 @@ function renderHud() {
   }
 
   lastRenderedResources = model.resources;
+
+  // Top strip — mode & timer
+  modeChip.textContent = model.modeLabel;
+  modeChip.classList.toggle('mode-armed', session.state.render.commandMode === 'attack-move');
+  modeChip.classList.toggle('mode-build', session.state.render.commandMode === 'build');
+
+  if (model.modeHint) {
+    modeHintEl.textContent = model.modeHint;
+    modeHintEl.classList.remove('hidden');
+  } else {
+    modeHintEl.classList.add('hidden');
+  }
+
+  timerDisplay.textContent = formatTime(model.tick, tickRate);
+  pauseButton.textContent = model.paused ? 'Resume' : 'Pause';
+
+  // Command deck — selection
   selectionTitle.textContent = model.selectionTitle;
   selectionDetail.textContent = model.selectionDetail;
   selectionTarget.textContent = model.selectionTarget ?? '';
   selectionCombat.textContent = model.selectionCombatDetail ?? '';
   selectionTarget.classList.toggle('hidden', !model.selectionTarget);
   selectionCombat.classList.toggle('hidden', !model.selectionCombatDetail);
-  statusLine.textContent = `${model.modeLabel} | ${formatTime(model.tick, tickRate)} elapsed`;
-  pauseButton.textContent = model.paused ? 'Resume' : 'Pause';
 
-  // Army overview
-  armyOverview.innerHTML = model.armyOverview.length > 0
-    ? model.armyOverview.map((e) => `<div class="army-row"><span>${e.name}</span><strong>${e.count}</strong></div>`).join('')
-    : '<div class="army-row dim">No units</div>';
+  // Command deck — actions
+  renderActionButtons(buildActions, buildActionButtons, model.buildActions, 'Select HQ or meet tech req.');
+  renderActionButtons(trainActions, trainActionButtons, model.trainActions, 'Select a factory to train.');
 
-  enemyArmyOverview.innerHTML = model.enemyArmyOverview.length > 0
-    ? model.enemyArmyOverview.map((e) => `<div class="army-row"><span>${e.name}</span><strong>${e.count}</strong></div>`).join('')
-    : '<div class="army-row dim">No units</div>';
-
-  // Production queue
+  // Command deck — queue
   if (model.productionQueues.length > 0) {
     queueSection.classList.remove('hidden');
     queueDisplay.innerHTML = model.productionQueues.map((q) => {
@@ -621,23 +644,16 @@ function renderHud() {
     queueSection.classList.add('hidden');
   }
 
-  renderActionButtons(buildActions, buildActionButtons, model.buildActions, 'Need more tech or credits to construct.');
-  renderActionButtons(trainActions, trainActionButtons, model.trainActions, 'Select one completed factory to train units.');
+  // Command deck — forces
+  playerForceCount.textContent = `${model.playerUnitCount} units · ${model.playerBuildingCount} bldg`;
+  enemyForceCount.textContent = `${model.enemyUnitCount} units · ${model.enemyBuildingCount} bldg`;
 
+  // End game
   if (model.winner) {
     endOverlay.classList.remove('hidden');
     endKicker.textContent = model.winner === 'Victory' ? 'Your Team' : 'Opponent Team';
     endTitle.textContent = model.winner;
     endReason.textContent = session.state.sim.lossReason ?? '';
-  }
-
-  if (session.state.render.placementPreview) {
-    const buildingConfig = getBuildingConfig(
-      session.config,
-      session.state.sim.players[session.localPlayerId]?.factionId ?? 'aurora',
-      session.state.render.placementPreview.buildingTypeId,
-    );
-    statusLine.textContent = `${buildingConfig.name}: left click to place, right click or Esc to cancel.`;
   }
 }
 
@@ -699,4 +715,12 @@ restartButton.addEventListener('click', () => {
 
 pauseButton.addEventListener('click', () => {
   session?.togglePause();
+});
+
+helpToggle.addEventListener('click', () => {
+  helpOverlay.classList.toggle('hidden');
+});
+
+helpClose.addEventListener('click', () => {
+  helpOverlay.classList.add('hidden');
 });
