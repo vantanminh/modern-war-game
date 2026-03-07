@@ -2,10 +2,11 @@ import { describe, expect, it } from 'vitest';
 
 import { defaultGameConfig } from './config';
 import { createInitialGameState, stepSimulation } from './simulation';
+import type { GameConfig } from './types';
 
 describe('ai', () => {
   it('builds economy infrastructure and grows its army', () => {
-    const config = {
+    const config: GameConfig = {
       ...defaultGameConfig,
       factions: {
         ...defaultGameConfig.factions,

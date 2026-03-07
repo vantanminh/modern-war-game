@@ -105,8 +105,6 @@ export class BattleScene extends Phaser.Scene {
     }
 
     this.drawSelectionBox();
-    this.drawPlacementPreview();
-    this.drawCombatOverlays();
   }
 
   private registerInput() {
@@ -420,6 +418,9 @@ export class BattleScene extends Phaser.Scene {
         this.visuals.delete(id);
       }
     });
+
+    this.drawPlacementPreview();
+    this.drawCombatOverlays();
   }
 
   private createUnitVisual(unit: UnitState) {

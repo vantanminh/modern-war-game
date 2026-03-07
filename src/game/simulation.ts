@@ -7,7 +7,14 @@ import {
   getPlayerUnits,
   getUnitConfig,
 } from './config';
-import { createBlockedSet, findBestReachablePath, findBuildSite, findPath, nearestReachablePoint, toTileKey } from './pathfinding';
+import {
+  createBlockedSet,
+  findBestReachablePath,
+  findBuildSite,
+  findPath,
+  nearestReachablePoint,
+  toTileKey,
+} from './pathfinding';
 import type {
   AttackCommand,
   BuildCommand,
@@ -31,6 +38,120 @@ let idCounter = 0;
 function nextId(prefix: string) {
   idCounter += 1;
   return `${prefix}-${idCounter}`;
+}
+
+interface TargetBuckets {
+  units: UnitState[];
+  buildings: BuildingState[];
+}
+
+interface SimulationTickCache {
+  tick: number;
+  blockedSet?: Set<string>;
+  ignoredBlockedSets: Map<string, Set<string>>;
+  targetsByOwner?: Record<PlayerId, TargetBuckets>;
+}
+
+const simulationTickCaches = new WeakMap<SimulationState, SimulationTickCache>();
+const resourceTileCaches = new WeakMap<GameConfig, Set<string>>();
+
+function hashString(value: string) {
+  let hash = 0;
+
+  for (let index = 0; index < value.length; index += 1) {
+    hash = (hash * 31 + value.charCodeAt(index)) >>> 0;
+  }
+
+  return hash;
+}
+
+function getSimulationTickCache(sim: SimulationState) {
+  const cached = simulationTickCaches.get(sim);
+  if (cached && cached.tick === sim.tick) {
+    return cached;
+  }
+
+  const nextCache: SimulationTickCache = {
+    tick: sim.tick,
+    ignoredBlockedSets: new Map<string, Set<string>>(),
+  };
+  simulationTickCaches.set(sim, nextCache);
+  return nextCache;
+}
+
+function invalidateBlockedSetCache(sim: SimulationState) {
+  const cache = simulationTickCaches.get(sim);
+  if (!cache) {
+    return;
+  }
+
+  cache.blockedSet = undefined;
+  cache.ignoredBlockedSets.clear();
+}
+
+function invalidateTargetCache(sim: SimulationState) {
+  const cache = simulationTickCaches.get(sim);
+  if (cache) {
+    cache.targetsByOwner = undefined;
+  }
+}
+
+function getBlockedSetForTick(
+  config: GameConfig,
+  sim: SimulationState,
+  ignoredBuildingId?: string,
+) {
+  const cache = getSimulationTickCache(sim);
+
+  if (!ignoredBuildingId) {
+    if (!cache.blockedSet) {
+      cache.blockedSet = createBlockedSet(config, sim);
+    }
+
+    return cache.blockedSet;
+  }
+
+  const cached = cache.ignoredBlockedSets.get(ignoredBuildingId);
+  if (cached) {
+    return cached;
+  }
+
+  const blocked = createBlockedSet(config, sim, ignoredBuildingId);
+  cache.ignoredBlockedSets.set(ignoredBuildingId, blocked);
+  return blocked;
+}
+
+function getResourceTileSet(config: GameConfig) {
+  const cached = resourceTileCaches.get(config);
+  if (cached) {
+    return cached;
+  }
+
+  const tiles = new Set<string>(
+    config.map.resourceNodes.map((resource) => toTileKey(Math.round(resource.x), Math.round(resource.y))),
+  );
+  resourceTileCaches.set(config, tiles);
+  return tiles;
+}
+
+function getTargetsByOwner(sim: SimulationState, ownerId: PlayerId) {
+  const cache = getSimulationTickCache(sim);
+  if (!cache.targetsByOwner) {
+    cache.targetsByOwner = {
+      player: { units: [], buildings: [] },
+      enemy: { units: [], buildings: [] },
+    };
+
+    Object.values(sim.units).forEach((unit) => {
+      cache.targetsByOwner![unit.ownerId].units.push(unit);
+    });
+
+    Object.values(sim.buildings).forEach((building) => {
+      cache.targetsByOwner![building.ownerId].buildings.push(building);
+    });
+  }
+
+  return cache.targetsByOwner[ownerId === 'player' ? 'enemy' : 'player'];
 }
 
 function distance(a: { x: number; y: number }, b: { x: number; y: number }) {
@@ -233,17 +354,31 @@ function applyDamage(
 }
 
 function cleanupDestroyed(sim: SimulationState) {
+  let removedUnits = false;
+  let removedBuildings = false;
+
   Object.values(sim.units).forEach((unit) => {
     if (unit.hp <= 0) {
       delete sim.units[unit.id];
+      removedUnits = true;
     }
   });
 
   Object.values(sim.buildings).forEach((building) => {
     if (building.hp <= 0) {
       delete sim.buildings[building.id];
+      removedBuildings = true;
     }
   });
+
+  if (removedUnits) {
+    invalidateTargetCache(sim);
+  }
+
+  if (removedBuildings) {
+    invalidateBlockedSetCache(sim);
+    invalidateTargetCache(sim);
+  }
 }
 
 function checkLossCondition(sim: SimulationState, config: GameConfig) {
@@ -311,7 +446,7 @@ function planPathToDestination(
   maxDistanceFromTarget = Number.POSITIVE_INFINITY,
   preferredSearchRadius = 10,
 ) {
-  const blocked = createBlockedSet(config, sim);
+  const blocked = getBlockedSetForTick(config, sim);
   const origin = roundedPoint(unit);
   const result = findBestReachablePath(
     config,
@@ -340,6 +475,7 @@ function planPathToDestination(
 function shouldRefreshOrderPath(
   sim: SimulationState,
   config: GameConfig,
+  entityId: string,
   path: GridPoint[],
   blocked: Set<string>,
   allowPeriodicRefresh = true,
@@ -352,7 +488,11 @@ function shouldRefreshOrderPath(
     return true;
   }
 
-  return allowPeriodicRefresh && sim.tick % config.ai.pathRepathInterval === 0;
+  if (!allowPeriodicRefresh || config.ai.pathRepathInterval <= 0) {
+    return false;
+  }
+
+  return (sim.tick + hashString(entityId)) % config.ai.pathRepathInterval === 0;
 }
 
 function applyMoveCommand(sim: SimulationState, config: GameConfig, command: MoveCommand) {
@@ -463,7 +603,8 @@ export function getBuildPlacementStatus(
     };
   }
 
-  const blocked = createBlockedSet(config, state.sim);
+  const blocked = getBlockedSetForTick(config, state.sim);
+  const resourceTiles = getResourceTileSet(config);
 
   for (let y = 0; y < buildingConfig.footprint.height; y += 1) {
     for (let x = 0; x < buildingConfig.footprint.width; x += 1) {
@@ -484,11 +625,7 @@ export function getBuildPlacementStatus(
         };
       }
 
-      if (
-        Object.values(state.sim.resources).some(
-          (resource) => Math.round(resource.x) === footprintX && Math.round(resource.y) === footprintY,
-        )
-      ) {
+      if (resourceTiles.has(pointKey)) {
         return {
           valid: false,
           reason: 'Resource deposits must stay clear.',
@@ -525,6 +662,8 @@ function applyBuildCommand(state: GameState, config: GameConfig, command: BuildC
   );
 
   state.sim.buildings[building.id] = building;
+  invalidateBlockedSetCache(state.sim);
+  invalidateTargetCache(state.sim);
 }
 
 function applyProduceCommand(state: GameState, config: GameConfig, command: ProduceCommand) {
@@ -574,7 +713,7 @@ function spawnUnitNearBuilding(
   building: BuildingState,
   unitTypeId: string,
 ) {
-  const blocked = createBlockedSet(config, sim, building.id);
+  const blocked = getBlockedSetForTick(config, sim, building.id);
   const anchor = building.rallyPoint;
   const destination = findBuildSite(
     config,
@@ -639,14 +778,11 @@ function findNearestEnemyTarget(
   range: number,
   canAttackBuildings: boolean,
 ) {
+  const targets = getTargetsByOwner(sim, ownerId);
   let bestId: string | null = null;
   let bestDistance = Infinity;
 
-  Object.values(sim.units).forEach((unit) => {
-    if (unit.ownerId === ownerId) {
-      return;
-    }
-
+  targets.units.forEach((unit) => {
     const currentDistance = distance(position, unit);
     if (currentDistance <= range && currentDistance < bestDistance) {
       bestDistance = currentDistance;
@@ -658,11 +794,7 @@ function findNearestEnemyTarget(
     return bestId;
   }
 
-  Object.values(sim.buildings).forEach((building) => {
-    if (building.ownerId === ownerId) {
-      return;
-    }
-
+  targets.buildings.forEach((building) => {
     const currentDistance = distance(position, centerOfBuilding(building, config));
     if (currentDistance <= range && currentDistance < bestDistance) {
       bestDistance = currentDistance;
@@ -737,8 +869,8 @@ function updateWorkerOrder(sim: SimulationState, config: GameConfig, unit: UnitS
 
     const resourcePoint = { x: Math.round(resource.x), y: Math.round(resource.y) };
     if (distance(unit, resource) > 0.8) {
-      const blocked = createBlockedSet(config, sim);
-      if (shouldRefreshOrderPath(sim, config, unit.order.path, blocked, false)) {
+      const blocked = getBlockedSetForTick(config, sim);
+      if (shouldRefreshOrderPath(sim, config, unit.id, unit.order.path, blocked, false)) {
         retargetPath(sim, config, unit, resourcePoint);
       }
       moveUnitAlongPath(unit, config);
@@ -763,8 +895,8 @@ function updateWorkerOrder(sim: SimulationState, config: GameConfig, unit: UnitS
 
     const returnPoint = centerOfBuilding(refinery, config);
     if (distance(unit, returnPoint) > refineryDropoffRange) {
-      const blocked = createBlockedSet(config, sim);
-      if (shouldRefreshOrderPath(sim, config, unit.order.path, blocked, false)) {
+      const blocked = getBlockedSetForTick(config, sim);
+      if (shouldRefreshOrderPath(sim, config, unit.id, unit.order.path, blocked, false)) {
         retargetPath(sim, config, unit, returnPoint, refineryDropoffRange, 10);
       }
       moveUnitAlongPath(unit, config);
@@ -812,8 +944,8 @@ function updateUnitCombat(sim: SimulationState, config: GameConfig, unit: UnitSt
       return;
     }
 
-    const blocked = createBlockedSet(config, sim);
-    if (shouldRefreshOrderPath(sim, config, unit.order.path, blocked)) {
+    const blocked = getBlockedSetForTick(config, sim);
+    if (shouldRefreshOrderPath(sim, config, unit.id, unit.order.path, blocked)) {
       retargetPath(
         sim,
         config,
@@ -827,14 +959,21 @@ function updateUnitCombat(sim: SimulationState, config: GameConfig, unit: UnitSt
     return;
   }
 
-  const nearbyEnemyId = findNearestEnemyTarget(
-    sim,
-    config,
-    unit.ownerId,
-    unit,
-    unitConfig.range,
-    unitConfig.attackBuildings ?? true,
-  );
+  const shouldScanForTargets =
+    unit.cooldownRemaining === 0 ||
+    unit.order.kind === 'attack-move' ||
+    (sim.tick + hashString(unit.id)) % Math.max(2, Math.floor(config.ai.pathRepathInterval / 2)) === 0;
+
+  const nearbyEnemyId = shouldScanForTargets
+    ? findNearestEnemyTarget(
+        sim,
+        config,
+        unit.ownerId,
+        unit,
+        unitConfig.range,
+        unitConfig.attackBuildings ?? true,
+      )
+    : null;
 
   if (nearbyEnemyId && unit.cooldownRemaining === 0) {
     applyDamage(sim, config, unitConfig, nearbyEnemyId);
@@ -843,8 +982,8 @@ function updateUnitCombat(sim: SimulationState, config: GameConfig, unit: UnitSt
   }
 
   if (unit.order.kind === 'move' || unit.order.kind === 'attack-move') {
-    const blocked = createBlockedSet(config, sim);
-    if (unit.order.target && shouldRefreshOrderPath(sim, config, unit.order.path, blocked)) {
+    const blocked = getBlockedSetForTick(config, sim);
+    if (unit.order.target && shouldRefreshOrderPath(sim, config, unit.id, unit.order.path, blocked)) {
       retargetPath(sim, config, unit, unit.order.target);
     }
     moveUnitAlongPath(unit, config);
@@ -914,7 +1053,7 @@ function aiBuildStructure(
   }
   const placement = findBuildSite(
     config,
-    createBlockedSet(config, state.sim),
+    getBlockedSetForTick(config, state.sim),
     config.map.obstacleAreas,
     bConfig.footprint,
     anchor,
@@ -1209,10 +1348,25 @@ export function stepSimulation(
 }
 
 export function getSelectionSummary(state: GameState): SelectionSummary {
-  const ids = new Set(state.render.selectedIds);
+  const units: UnitState[] = [];
+  const buildings: BuildingState[] = [];
+
+  state.render.selectedIds.forEach((id) => {
+    const unit = state.sim.units[id];
+    if (unit) {
+      units.push(unit);
+      return;
+    }
+
+    const building = state.sim.buildings[id];
+    if (building) {
+      buildings.push(building);
+    }
+  });
+
   return {
-    units: Object.values(state.sim.units).filter((unit) => ids.has(unit.id)),
-    buildings: Object.values(state.sim.buildings).filter((building) => ids.has(building.id)),
+    units,
+    buildings,
   };
 }
 

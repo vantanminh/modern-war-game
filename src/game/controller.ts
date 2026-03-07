@@ -73,6 +73,8 @@ export class BattleSession {
 
   private accumulator = 0;
   private listeners = new Set<Listener>();
+  private selectionCache: SelectionSummary | null = null;
+  private hudModelCache: HudModel | null = null;
 
   constructor(config: GameConfig = defaultGameConfig) {
     this.config = config;
@@ -88,8 +90,14 @@ export class BattleSession {
     };
   }
 
+  private invalidateDerivedCaches() {
+    this.selectionCache = null;
+    this.hudModelCache = null;
+  }
+
   private emit() {
     this.syncRenderState();
+    this.invalidateDerivedCaches();
     this.listeners.forEach((listener) => listener(this.state));
   }
 
@@ -115,6 +123,7 @@ export class BattleSession {
     this.accumulator = 0;
     this.paused = false;
     this.state = createInitialGameState(this.config);
+    this.invalidateDerivedCaches();
     this.emit();
   }
 
@@ -149,7 +158,11 @@ export class BattleSession {
   }
 
   getSelection() {
-    return getSelectionSummary(this.state);
+    if (!this.selectionCache) {
+      this.selectionCache = getSelectionSummary(this.state);
+    }
+
+    return this.selectionCache;
   }
 
   startBuildPlacement(buildingTypeId: string, tile: GridPoint = { x: 0, y: 0 }) {
@@ -299,6 +312,10 @@ export class BattleSession {
   }
 
   getHudModel(): HudModel {
+    if (this.hudModelCache) {
+      return this.hudModelCache;
+    }
+
     const selection = this.getSelection();
     const player = this.state.sim.players.player;
     const enemy = this.state.sim.players.enemy;
@@ -307,7 +324,7 @@ export class BattleSession {
     const selectedBuilding =
       selection.buildings.length === 1 && selection.units.length === 0 ? selection.buildings[0] : null;
 
-    return {
+    const model = {
       resources: player.resources,
       incomePerSecond: player.incomePerSecond,
       projectedIncomePerSecond: economy.projectedIncomePerSecond,
@@ -354,6 +371,9 @@ export class BattleSession {
       playerBuildingCount: getPlayerBuildings(this.state.sim.buildings, 'player').length,
       enemyBuildingCount: getPlayerBuildings(this.state.sim.buildings, 'enemy').length,
     };
+
+    this.hudModelCache = model;
+    return model;
   }
 }
 

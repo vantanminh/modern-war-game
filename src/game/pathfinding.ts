@@ -12,8 +12,57 @@ const CARDINALS: GridPoint[] = [
   { x: 0, y: -1 },
 ];
 
+const terrainBlockedCache = new WeakMap<GameConfig, Set<string>>();
+const obstacleSetCache = new WeakMap<GameConfig, Set<string>>();
+
 function key(point: GridPoint) {
   return `${point.x},${point.y}`;
+}
+
+function getTerrainBlockedSet(config: GameConfig) {
+  const cached = terrainBlockedCache.get(config);
+  if (cached) {
+    return cached;
+  }
+
+  const terrainBlocked = new Set<string>(config.map.terrainBlocked.map((point) => key(point)));
+  terrainBlockedCache.set(config, terrainBlocked);
+  return terrainBlocked;
+}
+
+function getObstacleSet(config: GameConfig, obstacleAreas: RectangleArea[]) {
+  const cached = obstacleSetCache.get(config);
+  if (cached) {
+    return cached;
+  }
+
+  const obstacleSet = new Set<string>();
+  obstacleAreas.forEach((area) => {
+    for (let y = area.y; y < area.y + area.height; y += 1) {
+      for (let x = area.x; x < area.x + area.width; x += 1) {
+        obstacleSet.add(toTileKey(x, y));
+      }
+    }
+  });
+
+  obstacleSetCache.set(config, obstacleSet);
+  return obstacleSet;
+}
+
+function popLowestScore(open: GridPoint[], score: Map<string, number>) {
+  let lowestIndex = 0;
+  let lowestScore = score.get(key(open[0])) ?? Infinity;
+
+  for (let index = 1; index < open.length; index += 1) {
+    const currentScore = score.get(key(open[index])) ?? Infinity;
+    if (currentScore < lowestScore) {
+      lowestScore = currentScore;
+      lowestIndex = index;
+    }
+  }
+
+  const [point] = open.splice(lowestIndex, 1);
+  return point;
 }
 
 export function toTileKey(x: number, y: number) {
@@ -25,7 +74,7 @@ export function inBounds(config: GameConfig, point: GridPoint) {
 }
 
 export function createBlockedSet(config: GameConfig, sim: SimulationState, ignoredBuildingId?: string) {
-  const blocked = new Set<string>(config.map.terrainBlocked.map((point) => key(point)));
+  const blocked = new Set<string>(getTerrainBlockedSet(config));
 
   Object.values(sim.buildings).forEach((building) => {
     if (building.id === ignoredBuildingId) {
@@ -79,15 +128,16 @@ export function findPath(
   }
 
   const open = [from];
+  const openKeys = new Set<string>([key(from)]);
   const cameFrom = new Map<string, GridPoint>();
   const gScore = new Map<string, number>([[key(from), 0]]);
   const fScore = new Map<string, number>([[key(from), heuristic(from, to)]]);
   const closed = new Set<string>();
 
   while (open.length > 0) {
-    open.sort((a, b) => (fScore.get(key(a)) ?? Infinity) - (fScore.get(key(b)) ?? Infinity));
-    const current = open.shift()!;
+    const current = popLowestScore(open, fScore);
     const currentKey = key(current);
+    openKeys.delete(currentKey);
 
     if (current.x === to.x && current.y === to.y) {
       return reconstruct(cameFrom, current);
@@ -112,8 +162,9 @@ export function findPath(
       gScore.set(neighborKey, tentative);
       fScore.set(neighborKey, tentative + heuristic(neighbor, to));
 
-      if (!open.some((point) => point.x === neighbor.x && point.y === neighbor.y)) {
+      if (!openKeys.has(neighborKey)) {
         open.push(neighbor);
+        openKeys.add(neighborKey);
       }
     }
   }
@@ -159,8 +210,10 @@ export function findBestReachablePath(
   }
 
   const open = [from];
+  const openKeys = new Set<string>([key(from)]);
   const cameFrom = new Map<string, GridPoint>();
   const gScore = new Map<string, number>([[key(from), 0]]);
+  const fScore = new Map<string, number>([[key(from), tileCenterDistance(from, target)]]);
 
   let bestPoint = from;
   let bestPathLength = 0;
@@ -174,9 +227,9 @@ export function findBestReachablePath(
   }
 
   while (open.length > 0) {
-    open.sort((a, b) => (gScore.get(key(a)) ?? Infinity) - (gScore.get(key(b)) ?? Infinity));
-    const current = open.shift()!;
+    const current = popLowestScore(open, fScore);
     const currentKey = key(current);
+    openKeys.delete(currentKey);
     const currentPathLength = gScore.get(currentKey) ?? Infinity;
     const currentTargetDistance = tileCenterDistance(current, target);
 
@@ -214,9 +267,11 @@ export function findBestReachablePath(
 
       cameFrom.set(neighborKey, current);
       gScore.set(neighborKey, tentative);
+      fScore.set(neighborKey, tentative + tileCenterDistance(neighbor, target));
 
-      if (!open.some((point) => point.x === neighbor.x && point.y === neighbor.y)) {
+      if (!openKeys.has(neighborKey)) {
         open.push(neighbor);
+        openKeys.add(neighborKey);
       }
     }
   }
@@ -235,14 +290,7 @@ export function findBuildSite(
   anchor: GridPoint,
   maxRadius = 10,
 ) {
-  const obstacleSet = new Set<string>();
-  obstacleAreas.forEach((area) => {
-    for (let y = area.y; y < area.y + area.height; y += 1) {
-      for (let x = area.x; x < area.x + area.width; x += 1) {
-        obstacleSet.add(toTileKey(x, y));
-      }
-    }
-  });
+  const obstacleSet = getObstacleSet(config, obstacleAreas);
 
   for (let radius = 0; radius <= maxRadius; radius += 1) {
     for (let y = anchor.y - radius; y <= anchor.y + radius; y += 1) {
