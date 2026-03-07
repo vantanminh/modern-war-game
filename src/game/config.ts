@@ -264,6 +264,11 @@ export const defaultGameConfig: GameConfig = {
     thinkInterval: 10,
     attackThreshold: 4,
     economyTarget: 4,
+    defenseRadius: 8,
+    reserveRatio: 0.3,
+    retreatHpRatio: 0.25,
+    maxWorkers: 7,
+    expandResourceThreshold: 1200,
   },
 };
 

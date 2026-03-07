@@ -742,6 +742,54 @@ function updateBuildingCombat(sim: SimulationState, config: GameConfig, building
   }
 }
 
+function findEnemyThreatsNearBase(
+  sim: SimulationState,
+  playerId: PlayerId,
+  baseCenter: GridPoint,
+  radius: number,
+) {
+  const enemyId = playerId === 'player' ? 'enemy' : 'player';
+  return Object.values(sim.units).filter(
+    (unit) => unit.ownerId === enemyId && distance(unit, baseCenter) <= radius,
+  );
+}
+
+function aiBuildStructure(
+  state: GameState,
+  config: GameConfig,
+  playerId: PlayerId,
+  buildingTypeId: string,
+  anchor: GridPoint,
+  searchRadius: number,
+) {
+  if (!canPlayerBuild(config, playerId, state.sim.players[playerId].factionId, state.sim.buildings, buildingTypeId)) {
+    return false;
+  }
+  const bConfig = getBuildingConfig(config, state.sim.players[playerId].factionId, buildingTypeId);
+  if (state.sim.players[playerId].resources < bConfig.cost) {
+    return false;
+  }
+  const placement = findBuildSite(
+    config,
+    createBlockedSet(config, state.sim),
+    config.map.obstacleAreas,
+    bConfig.footprint,
+    anchor,
+    searchRadius,
+  );
+  if (placement) {
+    applyBuildCommand(state, config, {
+      type: 'build',
+      playerId,
+      buildingTypeId,
+      tileX: placement.x,
+      tileY: placement.y,
+    });
+    return true;
+  }
+  return false;
+}
+
 function runAiTurn(state: GameState, config: GameConfig, playerId: PlayerId) {
   const player = state.sim.players[playerId];
   if (player.defeated) {
@@ -753,42 +801,68 @@ function runAiTurn(state: GameState, config: GameConfig, playerId: PlayerId) {
     return;
   }
 
+  const enemyId: PlayerId = playerId === 'player' ? 'enemy' : 'player';
   const playerBuildings = getPlayerBuildings(state.sim.buildings, playerId);
   const playerUnits = getPlayerUnits(state.sim.units, playerId);
-  const workerCount = playerUnits.filter((unit) => unit.unitTypeId === 'courier').length;
+  const enemyUnits = getPlayerUnits(state.sim.units, enemyId);
+  const workerCount = playerUnits.filter((u) => u.unitTypeId === 'courier').length;
+  const combatUnits = playerUnits.filter((u) => u.unitTypeId !== 'courier');
+
+  const hq = playerBuildings.find((b) => b.buildingTypeId === 'command-core');
+  const baseCenter = hq ? centerOfBuilding(hq, config) : spawn.hq;
+
+  const hasRefinery = playerBuildings.some(
+    (b) => b.buildingTypeId === 'refinery' && b.constructionRemaining === 0,
+  );
   const barracks = playerBuildings.find(
-    (building) => building.buildingTypeId === 'barracks' && building.constructionRemaining === 0,
+    (b) => b.buildingTypeId === 'barracks' && b.constructionRemaining === 0,
   );
   const motorPool = playerBuildings.find(
-    (building) => building.buildingTypeId === 'motor-pool' && building.constructionRemaining === 0,
+    (b) => b.buildingTypeId === 'motor-pool' && b.constructionRemaining === 0,
   );
-  const hasRefinery = playerBuildings.some(
-    (building) => building.buildingTypeId === 'refinery' && building.constructionRemaining === 0,
-  );
+  const sentryCount = playerBuildings.filter(
+    (b) => b.buildingTypeId === 'sentry',
+  ).length;
 
-  if (!hasRefinery && canPlayerBuild(config, playerId, player.factionId, state.sim.buildings, 'refinery')) {
-    const placement = findBuildSite(
-      config,
-      createBlockedSet(config, state.sim),
-      config.map.obstacleAreas,
-      getBuildingConfig(config, player.factionId, 'refinery').footprint,
-      spawn.refinery,
-      6,
+  // --- DEFENSE: detect threats near base and recall idle combat units ---
+  const threats = findEnemyThreatsNearBase(state.sim, playerId, baseCenter, config.ai.defenseRadius);
+  if (threats.length > 0) {
+    const idleCombat = combatUnits.filter(
+      (u) => u.order.kind === 'idle' || (u.order.kind === 'move' && distance(u, baseCenter) < config.ai.defenseRadius * 1.5),
     );
-    if (placement) {
-      applyBuildCommand(state, config, {
-        type: 'build',
+    if (idleCombat.length > 0) {
+      const nearestThreat = threats.reduce((best, t) =>
+        distance(t, baseCenter) < distance(best, baseCenter) ? t : best,
+      );
+      applyAttackCommand(state.sim, config, {
+        type: 'attack',
         playerId,
-        buildingTypeId: 'refinery',
-        tileX: placement.x,
-        tileY: placement.y,
+        unitIds: idleCombat.map((u) => u.id),
+        targetId: nearestThreat.id,
+        target: { x: Math.round(nearestThreat.x), y: Math.round(nearestThreat.y) },
       });
-      return;
     }
   }
 
-  const hq = playerBuildings.find((building) => building.buildingTypeId === 'command-core');
-  if (hq && workerCount < config.ai.economyTarget && hq.queue.length < 2) {
+  // --- RETREAT: pull back badly wounded units ---
+  combatUnits.forEach((unit) => {
+    const uConfig = getUnitConfig(config, unit.factionId, unit.unitTypeId);
+    if (unit.hp / uConfig.maxHp < config.ai.retreatHpRatio && unit.order.kind !== 'move') {
+      unit.order = {
+        kind: 'move',
+        target: { x: Math.round(baseCenter.x), y: Math.round(baseCenter.y) },
+        path: [],
+      };
+    }
+  });
+
+  // --- ECONOMY: build refinery ---
+  if (!hasRefinery) {
+    if (aiBuildStructure(state, config, playerId, 'refinery', spawn.refinery, 6)) return;
+  }
+
+  // --- ECONOMY: train workers ---
+  if (hq && workerCount < Math.min(config.ai.economyTarget, config.ai.maxWorkers) && hq.queue.length < 2) {
     applyProduceCommand(state, config, {
       type: 'produce',
       playerId,
@@ -797,59 +871,56 @@ function runAiTurn(state: GameState, config: GameConfig, playerId: PlayerId) {
     });
   }
 
-  if (!barracks && canPlayerBuild(config, playerId, player.factionId, state.sim.buildings, 'barracks')) {
-    const placement = findBuildSite(
-      config,
-      createBlockedSet(config, state.sim),
-      config.map.obstacleAreas,
-      getBuildingConfig(config, player.factionId, 'barracks').footprint,
-      spawn.buildAnchor,
-      8,
-    );
-    if (placement) {
-      applyBuildCommand(state, config, {
-        type: 'build',
-        playerId,
-        buildingTypeId: 'barracks',
-        tileX: placement.x,
-        tileY: placement.y,
-      });
-      return;
+  // --- PRODUCTION: build barracks ---
+  if (!barracks) {
+    if (aiBuildStructure(state, config, playerId, 'barracks', spawn.buildAnchor, 8)) return;
+  }
+
+  // --- DEFENSE: build sentry after barracks ---
+  if (barracks && sentryCount < 2) {
+    const sentryAnchor = { x: spawn.hq.x + 2, y: spawn.hq.y - 1 };
+    if (aiBuildStructure(state, config, playerId, 'sentry', sentryAnchor, 8)) return;
+  }
+
+  // --- PRODUCTION: build motor pool ---
+  if (!motorPool) {
+    if (aiBuildStructure(state, config, playerId, 'motor-pool', spawn.buildAnchor, 10)) return;
+  }
+
+  // --- ECONOMY: expand with second refinery if resources running low ---
+  const refineryCount = playerBuildings.filter((b) => b.buildingTypeId === 'refinery').length;
+  if (refineryCount < 2 && player.resources >= config.ai.expandResourceThreshold) {
+    const midNode = config.map.resourceNodes.find((n) => distance(n, spawn.refinery) > 6);
+    if (midNode) {
+      aiBuildStructure(state, config, playerId, 'refinery', { x: midNode.x - 1, y: midNode.y + 1 }, 6);
     }
   }
 
-  if (!motorPool && canPlayerBuild(config, playerId, player.factionId, state.sim.buildings, 'motor-pool')) {
-    const placement = findBuildSite(
-      config,
-      createBlockedSet(config, state.sim),
-      config.map.obstacleAreas,
-      getBuildingConfig(config, player.factionId, 'motor-pool').footprint,
-      spawn.buildAnchor,
-      10,
-    );
-    if (placement) {
-      applyBuildCommand(state, config, {
-        type: 'build',
-        playerId,
-        buildingTypeId: 'motor-pool',
-        tileX: placement.x,
-        tileY: placement.y,
-      });
-      return;
-    }
+  // --- ECONOMY: replace lost workers ---
+  if (hq && workerCount < config.ai.economyTarget && hq.queue.length === 0) {
+    applyProduceCommand(state, config, {
+      type: 'produce',
+      playerId,
+      buildingId: hq.id,
+      unitTypeId: 'courier',
+    });
   }
 
+  // --- ARMY: train from barracks with better composition ---
   if (barracks && barracks.queue.length < 2) {
-    const infantryCount = playerUnits.filter((unit) => unit.unitTypeId === 'vanguard').length;
-    const artilleryCount = playerUnits.filter((unit) => unit.unitTypeId === 'ember').length;
+    const infantryCount = combatUnits.filter((u) => u.unitTypeId === 'vanguard').length;
+    const artilleryCount = combatUnits.filter((u) => u.unitTypeId === 'ember').length;
+    // Ratio: ~3 vanguard per 1 ember
+    const wantEmber = artilleryCount * 3 < infantryCount && artilleryCount < 3;
     applyProduceCommand(state, config, {
       type: 'produce',
       playerId,
       buildingId: barracks.id,
-      unitTypeId: infantryCount < 4 ? 'vanguard' : artilleryCount < 2 ? 'ember' : 'vanguard',
+      unitTypeId: wantEmber ? 'ember' : 'vanguard',
     });
   }
 
+  // --- ARMY: train strikers ---
   if (motorPool && motorPool.queue.length < 2) {
     applyProduceCommand(state, config, {
       type: 'produce',
@@ -859,28 +930,53 @@ function runAiTurn(state: GameState, config: GameConfig, playerId: PlayerId) {
     });
   }
 
-  const combatUnits = playerUnits.filter((unit) => unit.unitTypeId !== 'courier');
-  const enemyHQ = getPlayerBuildings(
-    state.sim.buildings,
-    playerId === 'player' ? 'enemy' : 'player',
-  ).find((building) => getBuildingConfig(config, building.factionId, building.buildingTypeId).isHQ);
+  // --- ATTACK: smarter decisions ---
+  const enemyBuildings = getPlayerBuildings(state.sim.buildings, enemyId);
+  const enemyHQ = enemyBuildings.find((b) => getBuildingConfig(config, b.factionId, b.buildingTypeId).isHQ);
+  const enemyCombatCount = enemyUnits.filter((u) => u.unitTypeId !== 'courier').length;
 
-  if (
-    enemyHQ &&
-    combatUnits.length >= config.ai.attackThreshold &&
-    state.sim.tick - player.lastAttackTick >= config.tickRate * 8
-  ) {
-    applyAttackCommand(state.sim, config, {
-      type: 'attack',
-      playerId,
-      unitIds: combatUnits.map((unit) => unit.id),
-      targetId: enemyHQ.id,
-      target: {
-        x: enemyHQ.tileX,
-        y: enemyHQ.tileY,
-      },
+  // Keep a defensive reserve
+  const reserveSize = Math.max(1, Math.floor(combatUnits.length * config.ai.reserveRatio));
+  const attackForce = combatUnits
+    .filter((u) => u.order.kind === 'idle' || u.order.kind === 'move')
+    .sort((a, b) => {
+      const aConf = getUnitConfig(config, a.factionId, a.unitTypeId);
+      const bConf = getUnitConfig(config, b.factionId, b.unitTypeId);
+      return (b.hp / bConf.maxHp) - (a.hp / aConf.maxHp);
     });
-    player.lastAttackTick = state.sim.tick;
+
+  // Leave reserve near base, send the rest
+  const availableForAttack = attackForce.length > reserveSize
+    ? attackForce.slice(0, attackForce.length - reserveSize)
+    : [];
+
+  const shouldAttack =
+    availableForAttack.length >= config.ai.attackThreshold &&
+    state.sim.tick - player.lastAttackTick >= config.tickRate * 6 &&
+    (availableForAttack.length > enemyCombatCount * 0.8 || availableForAttack.length >= 8);
+
+  if (shouldAttack && availableForAttack.length > 0) {
+    // Target priority: nearest enemy building, or HQ as fallback
+    const attackTarget = enemyBuildings.length > 0
+      ? enemyBuildings.reduce((best, b) => {
+          const bCenter = centerOfBuilding(b, config);
+          const bestCenter = centerOfBuilding(best, config);
+          return distance(bCenter, baseCenter) < distance(bestCenter, baseCenter) ? b : best;
+        })
+      : null;
+
+    const target = attackTarget ?? enemyHQ;
+    if (target) {
+      const targetCenter = centerOfBuilding(target, config);
+      applyAttackCommand(state.sim, config, {
+        type: 'attack',
+        playerId,
+        unitIds: availableForAttack.map((u) => u.id),
+        targetId: target.id,
+        target: { x: Math.round(targetCenter.x), y: Math.round(targetCenter.y) },
+      });
+      player.lastAttackTick = state.sim.tick;
+    }
   }
 }
 

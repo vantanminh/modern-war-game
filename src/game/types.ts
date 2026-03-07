@@ -129,6 +129,11 @@ export interface AiConfig {
   thinkInterval: number;
   attackThreshold: number;
   economyTarget: number;
+  defenseRadius: number;
+  reserveRatio: number;
+  retreatHpRatio: number;
+  maxWorkers: number;
+  expandResourceThreshold: number;
 }
 
 export interface GameConfig {

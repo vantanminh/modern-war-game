@@ -201,6 +201,88 @@ p {
   letter-spacing: 0.05em;
 }
 
+/* Forces overview */
+.forces-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.force-col {
+  display: grid;
+  gap: 4px;
+  align-content: start;
+}
+
+.force-header {
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding-bottom: 4px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+}
+
+.player-color {
+  color: #58a6ff;
+}
+
+.enemy-color {
+  color: #ff6b6b;
+}
+
+.army-list {
+  display: grid;
+  gap: 2px;
+}
+
+.army-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.82rem;
+  padding: 3px 0;
+}
+
+.army-row strong {
+  color: #c3ddf5;
+  font-size: 0.88rem;
+}
+
+.army-row.dim {
+  opacity: 0.4;
+  font-style: italic;
+}
+
+/* Production queue */
+.queue-item {
+  display: grid;
+  gap: 3px;
+  padding: 6px 0;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.08);
+}
+
+.queue-info {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.78rem;
+  color: #93b3d0;
+}
+
+.queue-bar {
+  height: 5px;
+  background: rgba(148, 163, 184, 0.12);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.queue-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #3b82f6, #60a5fa);
+  border-radius: 2px;
+  transition: width 120ms ease;
+}
+
 @media (max-width: 1180px) {
   .board {
     grid-template-columns: 1fr;

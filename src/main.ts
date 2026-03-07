@@ -28,9 +28,26 @@ app.innerHTML = `
           <p id="status-line">Initializing battlefield...</p>
         </section>
         <section>
+          <p class="panel-label">Forces</p>
+          <div class="forces-grid">
+            <div class="force-col">
+              <span class="force-header player-color">You</span>
+              <div id="army-overview" class="army-list"></div>
+            </div>
+            <div class="force-col">
+              <span class="force-header enemy-color">Enemy</span>
+              <div id="enemy-army-overview" class="army-list"></div>
+            </div>
+          </div>
+        </section>
+        <section>
           <p class="panel-label">Selection</p>
           <h3 id="selection-title">No selection</h3>
           <p id="selection-detail">Use left click or drag to select units.</p>
+        </section>
+        <section id="queue-section" class="hidden">
+          <p class="panel-label">Production Queue</p>
+          <div id="queue-display"></div>
         </section>
       </aside>
       <section class="viewport">
@@ -89,6 +106,10 @@ const trainActions = document.querySelector<HTMLDivElement>('#train-actions')!;
 const endTitle = document.querySelector<HTMLHeadingElement>('#end-title')!;
 const endReason = document.querySelector<HTMLParagraphElement>('#end-reason')!;
 const endKicker = document.querySelector<HTMLParagraphElement>('#end-kicker')!;
+const armyOverview = document.querySelector<HTMLDivElement>('#army-overview')!;
+const enemyArmyOverview = document.querySelector<HTMLDivElement>('#enemy-army-overview')!;
+const queueSection = document.querySelector<HTMLElement>('#queue-section')!;
+const queueDisplay = document.querySelector<HTMLDivElement>('#queue-display')!;
 
 let phaserGame: import('phaser').Game | null = null;
 let session: BattleSession | null = null;
@@ -126,18 +147,49 @@ async function mountBattle() {
   endOverlay.classList.add('hidden');
 }
 
+function formatTime(ticks: number, tickRate: number) {
+  const seconds = Math.ceil(ticks / tickRate);
+  return seconds >= 60 ? `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}` : `${seconds}s`;
+}
+
 function renderHud() {
   if (!session) {
     return;
   }
 
   const model = session.getHudModel();
+  const tickRate = session.config.tickRate;
   resourceCount.textContent = `${model.resources} credits`;
   selectionTitle.textContent = model.selectionTitle;
   selectionDetail.textContent = model.selectionDetail;
-  statusLine.textContent = `${model.modeLabel} Tick ${model.tick}`;
+  statusLine.textContent = `${model.modeLabel} | ${formatTime(model.tick, tickRate)} elapsed`;
   pauseButton.textContent = model.paused ? 'Resume' : 'Pause';
 
+  // Army overview
+  armyOverview.innerHTML = model.armyOverview.length > 0
+    ? model.armyOverview.map((e) => `<div class="army-row"><span>${e.name}</span><strong>${e.count}</strong></div>`).join('')
+    : '<div class="army-row dim">No units</div>';
+
+  enemyArmyOverview.innerHTML = model.enemyArmyOverview.length > 0
+    ? model.enemyArmyOverview.map((e) => `<div class="army-row"><span>${e.name}</span><strong>${e.count}</strong></div>`).join('')
+    : '<div class="army-row dim">No units</div>';
+
+  // Production queue
+  if (model.productionQueues.length > 0) {
+    queueSection.classList.remove('hidden');
+    queueDisplay.innerHTML = model.productionQueues.map((q) => {
+      const pct = Math.round(q.progress * 100);
+      const timeLeft = formatTime(q.remainingTicks, tickRate);
+      return `<div class="queue-item">
+        <div class="queue-info"><span>${q.unitName}</span><span>${pct}% (${timeLeft})</span></div>
+        <div class="queue-bar"><div class="queue-fill" style="width:${pct}%"></div></div>
+      </div>`;
+    }).join('');
+  } else {
+    queueSection.classList.add('hidden');
+  }
+
+  // Build actions
   buildActions.innerHTML = '';
   model.buildActions.forEach((action) => {
     const button = document.createElement('button');
@@ -149,6 +201,7 @@ function renderHud() {
     buildActions.appendChild(button);
   });
 
+  // Train actions
   trainActions.innerHTML = '';
   model.trainActions.forEach((action) => {
     const button = document.createElement('button');
