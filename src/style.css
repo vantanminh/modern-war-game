@@ -48,6 +48,13 @@ button {
   box-shadow: 0 24px 48px rgba(0, 0, 0, 0.28);
 }
 
+.topbar-subtitle {
+  margin-top: 6px;
+  color: #9bbad6;
+  font-size: 0.88rem;
+  letter-spacing: 0.03em;
+}
+
 .topbar h1,
 .overlay-card h2,
 .panel h2,
@@ -90,6 +97,46 @@ p {
   border: 1px solid rgba(148, 163, 184, 0.2);
   overflow: hidden;
   background: linear-gradient(180deg, rgba(7, 15, 22, 0.88), rgba(9, 14, 20, 0.92));
+}
+
+.battle-ribbon {
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  right: 14px;
+  z-index: 4;
+  display: grid;
+  grid-template-columns: minmax(220px, 1.2fr) minmax(220px, 1.5fr) repeat(2, minmax(120px, 0.7fr));
+  gap: 10px;
+  pointer-events: none;
+}
+
+.battle-chip {
+  display: grid;
+  gap: 3px;
+  padding: 10px 12px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 14px;
+  background: linear-gradient(180deg, rgba(6, 13, 21, 0.86), rgba(9, 17, 27, 0.72));
+  box-shadow: 0 16px 34px rgba(0, 0, 0, 0.22);
+  backdrop-filter: blur(8px);
+}
+
+.battle-chip-primary {
+  border-color: rgba(96, 165, 250, 0.28);
+}
+
+.battle-chip-label {
+  text-transform: uppercase;
+  letter-spacing: 0.15em;
+  font-size: 0.66rem;
+  color: #8eb2d4;
+}
+
+.battle-chip strong {
+  color: #edf6ff;
+  font-size: 0.84rem;
+  line-height: 1.35;
 }
 
 #game-root,
@@ -271,6 +318,7 @@ p {
   flex-wrap: wrap;
   gap: 10px;
   z-index: 3;
+  pointer-events: none;
 }
 
 .tips span {
@@ -457,6 +505,10 @@ p {
     grid-template-columns: 1fr;
   }
 
+  .battle-ribbon {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .panel-left,
   .panel-right {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -477,6 +529,13 @@ p {
   .panel-left,
   .panel-right {
     grid-template-columns: 1fr;
+  }
+
+  .battle-ribbon {
+    position: static;
+    grid-template-columns: 1fr;
+    padding: 14px 14px 0;
+    pointer-events: auto;
   }
 
   .topbar {

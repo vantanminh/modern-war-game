@@ -1,5 +1,5 @@
 import './style.css';
-import { getBuildingConfig } from './game/config';
+import { defaultGameConfig, getBuildingConfig } from './game/config';
 import { BattleSession } from './game/controller';
 
 const app = document.querySelector<HTMLDivElement>('#app');
@@ -14,6 +14,7 @@ app.innerHTML = `
       <div>
         <p class="eyebrow">RTS Web Prototype</p>
         <h1>Modern War</h1>
+        <p class="topbar-subtitle">${defaultGameConfig.map.name} · ${defaultGameConfig.map.width} x ${defaultGameConfig.map.height} battlefield</p>
       </div>
       <div class="topbar-actions">
         <button class="chrome-button" id="pause-button" type="button">Pause</button>
@@ -74,12 +75,30 @@ app.innerHTML = `
         </section>
       </aside>
       <section class="viewport">
+        <div class="battle-ribbon">
+          <div class="battle-chip battle-chip-primary">
+            <span class="battle-chip-label">Theater</span>
+            <strong id="battlefield-name">${defaultGameConfig.map.name}</strong>
+          </div>
+          <div class="battle-chip">
+            <span class="battle-chip-label">Orders</span>
+            <strong id="mode-chip">Standing by</strong>
+          </div>
+          <div class="battle-chip">
+            <span class="battle-chip-label">Deposits</span>
+            <strong id="resource-sites">0 online</strong>
+          </div>
+          <div class="battle-chip">
+            <span class="battle-chip-label">Selection</span>
+            <strong id="selection-count">0 active</strong>
+          </div>
+        </div>
         <div id="game-root"></div>
         <div class="overlay overlay-center" id="menu-overlay">
           <div class="overlay-card">
             <p class="eyebrow">Single-player Skirmish</p>
-            <h2>Red Scar Crossing</h2>
-            <p>Desktop-only v1: harvest, build, train, break the opposing Command Core.</p>
+            <h2>${defaultGameConfig.map.name}</h2>
+            <p>Expanded frontline: secure five ore deposits, scale up, and break the opposing Command Core.</p>
             <button class="primary-button" id="start-button" type="button">Start Skirmish</button>
           </div>
         </div>
@@ -94,7 +113,9 @@ app.innerHTML = `
         <div class="tips">
           <span>Arrow keys pan</span>
           <span>Mouse wheel zoom</span>
+          <span>Shift adds selection</span>
           <span>A arms attack-move</span>
+          <span>C centers camera</span>
           <span>Esc cancels mode</span>
           <span>Space pauses</span>
         </div>
@@ -140,6 +161,10 @@ const armyOverview = document.querySelector<HTMLDivElement>('#army-overview')!;
 const enemyArmyOverview = document.querySelector<HTMLDivElement>('#enemy-army-overview')!;
 const queueSection = document.querySelector<HTMLElement>('#queue-section')!;
 const queueDisplay = document.querySelector<HTMLDivElement>('#queue-display')!;
+const battlefieldName = document.querySelector<HTMLElement>('#battlefield-name')!;
+const modeChip = document.querySelector<HTMLElement>('#mode-chip')!;
+const resourceSites = document.querySelector<HTMLElement>('#resource-sites')!;
+const selectionCount = document.querySelector<HTMLElement>('#selection-count')!;
 
 const buildActionButtons = new Map<string, HTMLButtonElement>();
 const trainActionButtons = new Map<string, HTMLButtonElement>();
@@ -356,6 +381,10 @@ function renderHud() {
   projectedIncome.textContent = `~${model.projectedIncomePerSecond} / sec`;
   pendingIncome.textContent = model.pendingIncome > 0 ? `${model.pendingIncome} next payout` : '0 queued';
   workerCount.textContent = `${model.activeWorkers} active`;
+  battlefieldName.textContent = `${model.mapName} · ${model.mapSizeLabel}`;
+  modeChip.textContent = model.modeLabel;
+  resourceSites.textContent = `${model.activeResourceNodes} online`;
+  selectionCount.textContent = model.selectionCount > 0 ? `${model.selectionCount} active` : '0 active';
 
   if (payoutDelta > 0) {
     payoutBadge.textContent = `+${payoutDelta}`;

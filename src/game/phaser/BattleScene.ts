@@ -37,6 +37,7 @@ export class BattleScene extends Phaser.Scene {
   private cameraDragLast?: Phaser.Math.Vector2;
   private cursorKeys?: Phaser.Types.Input.Keyboard.CursorKeys;
   private attackKey?: Phaser.Input.Keyboard.Key;
+  private centerKey?: Phaser.Input.Keyboard.Key;
   private pauseKey?: Phaser.Input.Keyboard.Key;
   private cancelKey?: Phaser.Input.Keyboard.Key;
   private unsubscribe?: () => void;
@@ -59,7 +60,8 @@ export class BattleScene extends Phaser.Scene {
     const worldHeight = this.session.config.map.height * this.session.config.tileSize;
 
     this.cameras.main.setBounds(0, 0, worldWidth, worldHeight);
-    this.cameras.main.centerOn(this.session.config.tileSize * 10, this.session.config.tileSize * 20);
+    const initialFocus = this.getDefaultFocusPoint();
+    this.cameras.main.centerOn(initialFocus.x, initialFocus.y);
     this.cameras.main.setZoom(1.05);
     this.input.mouse?.disableContextMenu();
 
@@ -71,6 +73,7 @@ export class BattleScene extends Phaser.Scene {
 
     this.cursorKeys = this.input.keyboard?.createCursorKeys();
     this.attackKey = this.input.keyboard?.addKey(Phaser.Input.Keyboard.KeyCodes.A);
+    this.centerKey = this.input.keyboard?.addKey(Phaser.Input.Keyboard.KeyCodes.C);
     this.pauseKey = this.input.keyboard?.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
     this.cancelKey = this.input.keyboard?.addKey(Phaser.Input.Keyboard.KeyCodes.ESC);
 
@@ -86,6 +89,11 @@ export class BattleScene extends Phaser.Scene {
 
     if (this.attackKey && Phaser.Input.Keyboard.JustDown(this.attackKey)) {
       this.session.armAttackMove();
+    }
+
+    if (this.centerKey && Phaser.Input.Keyboard.JustDown(this.centerKey)) {
+      const focus = this.getSelectionFocusPoint() ?? this.getDefaultFocusPoint();
+      this.cameras.main.pan(focus.x, focus.y, 180, 'Sine.easeOut');
     }
 
     if (this.pauseKey && Phaser.Input.Keyboard.JustDown(this.pauseKey)) {
@@ -155,11 +163,12 @@ export class BattleScene extends Phaser.Scene {
         return;
       }
 
+      const additive = pointer.event instanceof MouseEvent && pointer.event.shiftKey;
       const end = new Phaser.Math.Vector2(pointer.worldX, pointer.worldY);
       if (Phaser.Math.Distance.BetweenPoints(this.dragStart, end) >= this.session.config.tileSize * 0.5) {
-        this.selectInRectangle(this.dragStart, end);
+        this.selectInRectangle(this.dragStart, end, additive);
       } else {
-        this.selectAtPoint(end);
+        this.selectAtPoint(end, additive);
       }
 
       this.dragStart = undefined;
@@ -197,17 +206,31 @@ export class BattleScene extends Phaser.Scene {
     this.session.commandSelectedUnits(tile);
   }
 
-  private selectAtPoint(point: Phaser.Math.Vector2) {
+  private selectAtPoint(point: Phaser.Math.Vector2, additive: boolean) {
     const hit = this.hitEntity(point.x, point.y);
     if (!hit || hit.ownerId !== 'player') {
-      this.session.setSelection([]);
+      if (!additive) {
+        this.session.setSelection([]);
+      }
       return;
     }
 
-    this.session.setSelection([hit.id]);
+    if (!additive) {
+      this.session.setSelection([hit.id]);
+      return;
+    }
+
+    const selectedIds = new Set(this.session.state.render.selectedIds);
+    if (selectedIds.has(hit.id)) {
+      selectedIds.delete(hit.id);
+    } else {
+      selectedIds.add(hit.id);
+    }
+
+    this.session.setSelection([...selectedIds]);
   }
 
-  private selectInRectangle(start: Phaser.Math.Vector2, end: Phaser.Math.Vector2) {
+  private selectInRectangle(start: Phaser.Math.Vector2, end: Phaser.Math.Vector2, additive: boolean) {
     const left = Math.min(start.x, end.x);
     const right = Math.max(start.x, end.x);
     const top = Math.min(start.y, end.y);
@@ -224,7 +247,66 @@ export class BattleScene extends Phaser.Scene {
       )
       .map((unit) => unit.id);
 
-    this.session.setSelection(selectedIds);
+    if (!additive) {
+      this.session.setSelection(selectedIds);
+      return;
+    }
+
+    const mergedIds = new Set([...this.session.state.render.selectedIds, ...selectedIds]);
+    this.session.setSelection([...mergedIds]);
+  }
+
+  private getDefaultFocusPoint() {
+    const playerHq = Object.values(this.session.state.sim.buildings).find(
+      (building) => building.ownerId === 'player' && building.buildingTypeId === 'command-core',
+    );
+
+    if (!playerHq) {
+      return {
+        x: this.session.config.tileSize * 10,
+        y: this.session.config.tileSize * 20,
+      };
+    }
+
+    const buildingConfig = getBuildingConfig(this.session.config, playerHq.factionId, playerHq.buildingTypeId);
+    return {
+      x: (playerHq.tileX + buildingConfig.footprint.width / 2 + 4) * this.session.config.tileSize,
+      y: (playerHq.tileY + buildingConfig.footprint.height / 2 - 2) * this.session.config.tileSize,
+    };
+  }
+
+  private getSelectionFocusPoint() {
+    const selection = this.session.getSelection();
+    if (selection.units.length === 0 && selection.buildings.length === 0) {
+      return null;
+    }
+
+    const points = [
+      ...selection.units.map((unit) => ({
+        x: unit.x * this.session.config.tileSize,
+        y: unit.y * this.session.config.tileSize,
+      })),
+      ...selection.buildings.map((building) => {
+        const buildingConfig = getBuildingConfig(this.session.config, building.factionId, building.buildingTypeId);
+        return {
+          x: (building.tileX + buildingConfig.footprint.width / 2) * this.session.config.tileSize,
+          y: (building.tileY + buildingConfig.footprint.height / 2) * this.session.config.tileSize,
+        };
+      }),
+    ];
+
+    const total = points.reduce(
+      (sum, point) => ({
+        x: sum.x + point.x,
+        y: sum.y + point.y,
+      }),
+      { x: 0, y: 0 },
+    );
+
+    return {
+      x: total.x / points.length,
+      y: total.y / points.length,
+    };
   }
 
   private handleCamera(delta: number) {

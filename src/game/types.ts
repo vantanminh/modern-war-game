@@ -228,6 +228,7 @@ export interface PlacementPreview {
   tileX: number;
   tileY: number;
   valid: boolean;
+  reason: string | null;
 }
 
 export interface RenderState {

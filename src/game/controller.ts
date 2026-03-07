@@ -1,5 +1,5 @@
 import { canPlayerBuild, canPlayerProduce, defaultGameConfig, getBuildingConfig, getPlayerBuildings, getPlayerUnits, getUnitConfig } from './config';
-import { createInitialGameState, getSelectionSummary, isBuildPlacementValid, issueCommand, stepSimulation } from './simulation';
+import { createInitialGameState, getBuildPlacementStatus, getSelectionSummary, issueCommand, stepSimulation } from './simulation';
 import type {
   BuildingState,
   CommandMode,
@@ -40,10 +40,14 @@ export interface HudModel {
   projectedIncomePerSecond: number;
   pendingIncome: number;
   activeWorkers: number;
+  activeResourceNodes: number;
   enemyResources: number;
   tick: number;
   paused: boolean;
   winner: string | null;
+  mapName: string;
+  mapSizeLabel: string;
+  selectionCount: number;
   modeLabel: string;
   selectionTitle: string;
   selectionDetail: string;
@@ -85,7 +89,26 @@ export class BattleSession {
   }
 
   private emit() {
+    this.syncRenderState();
     this.listeners.forEach((listener) => listener(this.state));
+  }
+
+  private syncRenderState() {
+    const validSelectedIds = this.state.render.selectedIds.filter(
+      (id) => Boolean(this.state.sim.units[id] ?? this.state.sim.buildings[id]),
+    );
+
+    if (validSelectedIds.length !== this.state.render.selectedIds.length) {
+      this.state.render.selectedIds = validSelectedIds;
+    }
+
+    const preview = this.state.render.placementPreview;
+    if (preview) {
+      this.state.render.placementPreview = this.computePlacementPreview(preview.buildingTypeId, {
+        x: preview.tileX,
+        y: preview.tileY,
+      });
+    }
   }
 
   reset() {
@@ -121,7 +144,7 @@ export class BattleSession {
   }
 
   setSelection(selectedIds: string[]) {
-    this.state.render.selectedIds = selectedIds;
+    this.state.render.selectedIds = [...new Set(selectedIds)];
     this.emit();
   }
 
@@ -130,6 +153,12 @@ export class BattleSession {
   }
 
   startBuildPlacement(buildingTypeId: string, tile: GridPoint = { x: 0, y: 0 }) {
+    const preview = this.state.render.placementPreview;
+    if (this.state.render.commandMode === 'build' && preview?.buildingTypeId === buildingTypeId) {
+      this.cancelModes();
+      return;
+    }
+
     this.state.render.commandMode = 'build';
     this.state.render.placementPreview = this.computePlacementPreview(buildingTypeId, tile);
     this.emit();
@@ -154,11 +183,21 @@ export class BattleSession {
   }
 
   private computePlacementPreview(buildingTypeId: string, tile: GridPoint): PlacementPreview {
+    const placement = getBuildPlacementStatus(
+      this.state,
+      this.config,
+      'player',
+      buildingTypeId,
+      tile.x,
+      tile.y,
+    );
+
     return {
       buildingTypeId,
       tileX: tile.x,
       tileY: tile.y,
-      valid: isBuildPlacementValid(this.state, this.config, 'player', buildingTypeId, tile.x, tile.y),
+      valid: placement.valid,
+      reason: placement.reason,
     };
   }
 
@@ -189,6 +228,14 @@ export class BattleSession {
   }
 
   cancelModes() {
+    if (this.state.render.commandMode === 'normal' && !this.state.render.placementPreview) {
+      if (this.state.render.selectedIds.length > 0) {
+        this.state.render.selectedIds = [];
+        this.emit();
+      }
+      return;
+    }
+
     this.state.render.commandMode = 'normal';
     this.state.render.placementPreview = null;
     this.emit();
@@ -266,9 +313,13 @@ export class BattleSession {
       projectedIncomePerSecond: economy.projectedIncomePerSecond,
       pendingIncome: player.pendingIncome,
       activeWorkers: economy.activeWorkers,
+      activeResourceNodes: Object.values(this.state.sim.resources).filter((resource) => resource.amount > 0).length,
       enemyResources: enemy.resources,
       tick: this.state.sim.tick,
       paused: this.paused,
+      mapName: this.config.map.name,
+      mapSizeLabel: `${this.config.map.width} x ${this.config.map.height}`,
+      selectionCount: selection.units.length + selection.buildings.length,
       winner: this.state.sim.winnerId
         ? this.state.sim.winnerId === 'player'
           ? 'Victory'
@@ -377,14 +428,16 @@ function buildEconomySnapshot(state: GameState, config: GameConfig, playerId: Pl
 
 function getModeLabel(mode: CommandMode, preview: PlacementPreview | null) {
   if (mode === 'attack-move') {
-    return 'Attack-move armed: right click to issue.';
+    return 'Attack-move primed. Right click to commit, Esc to cancel.';
   }
 
   if (mode === 'build' && preview) {
-    return `Placing ${preview.buildingTypeId} at ${preview.tileX},${preview.tileY}`;
+    const placementState = preview.valid ? 'ready' : 'blocked';
+    const placementHint = preview.reason ? ` ${preview.reason}` : '';
+    return `Placing ${preview.buildingTypeId} at ${preview.tileX},${preview.tileY} (${placementState}).${placementHint}`;
   }
 
-  return 'Standard orders: left drag to select, right click to move or attack.';
+  return 'Standard orders: drag to select, Shift adds, right click issues orders, Esc clears.';
 }
 
 function describeSelection(selection: SelectionSummary, config: GameConfig) {

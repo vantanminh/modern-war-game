@@ -8,8 +8,8 @@ describe('simulation', () => {
   it('validates build placement against occupied and open tiles', () => {
     const state = createInitialGameState(defaultGameConfig);
 
-    expect(isBuildPlacementValid(state, defaultGameConfig, 'player', 'barracks', 3, 20)).toBe(false);
-    expect(isBuildPlacementValid(state, defaultGameConfig, 'player', 'barracks', 11, 20)).toBe(true);
+    expect(isBuildPlacementValid(state, defaultGameConfig, 'player', 'barracks', 4, 23)).toBe(false);
+    expect(isBuildPlacementValid(state, defaultGameConfig, 'player', 'barracks', 12, 24)).toBe(true);
   });
 
   it('deducts cost and completes a production queue', () => {

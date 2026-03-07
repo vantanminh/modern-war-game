@@ -435,42 +435,72 @@ export function isBuildPlacementValid(
   tileX: number,
   tileY: number,
 ) {
+  return getBuildPlacementStatus(state, config, playerId, buildingTypeId, tileX, tileY).valid;
+}
+
+export function getBuildPlacementStatus(
+  state: GameState,
+  config: GameConfig,
+  playerId: PlayerId,
+  buildingTypeId: string,
+  tileX: number,
+  tileY: number,
+) {
   const player = state.sim.players[playerId];
   const buildingConfig = getBuildingConfig(config, player.factionId, buildingTypeId);
 
-  if (
-    !canPlayerBuild(config, playerId, player.factionId, state.sim.buildings, buildingTypeId) ||
-    player.resources < buildingConfig.cost
-  ) {
-    return false;
+  if (!canPlayerBuild(config, playerId, player.factionId, state.sim.buildings, buildingTypeId)) {
+    return {
+      valid: false,
+      reason: 'Tech requirements not met.',
+    };
+  }
+
+  if (player.resources < buildingConfig.cost) {
+    return {
+      valid: false,
+      reason: `Need ${buildingConfig.cost - player.resources} more credits.`,
+    };
   }
 
   const blocked = createBlockedSet(config, state.sim);
 
   for (let y = 0; y < buildingConfig.footprint.height; y += 1) {
     for (let x = 0; x < buildingConfig.footprint.width; x += 1) {
-      const pointKey = toTileKey(tileX + x, tileY + y);
-      if (
-        tileX + x < 0 ||
-        tileY + y < 0 ||
-        tileX + x >= config.map.width ||
-        tileY + y >= config.map.height ||
-        blocked.has(pointKey)
-      ) {
-        return false;
+      const footprintX = tileX + x;
+      const footprintY = tileY + y;
+      const pointKey = toTileKey(footprintX, footprintY);
+      if (footprintX < 0 || footprintY < 0 || footprintX >= config.map.width || footprintY >= config.map.height) {
+        return {
+          valid: false,
+          reason: 'Outside battlefield bounds.',
+        };
+      }
+
+      if (blocked.has(pointKey)) {
+        return {
+          valid: false,
+          reason: 'Blocked by terrain or existing structure.',
+        };
       }
 
       if (
         Object.values(state.sim.resources).some(
-          (resource) => Math.round(resource.x) === tileX + x && Math.round(resource.y) === tileY + y,
+          (resource) => Math.round(resource.x) === footprintX && Math.round(resource.y) === footprintY,
         )
       ) {
-        return false;
+        return {
+          valid: false,
+          reason: 'Resource deposits must stay clear.',
+        };
       }
     }
   }
 
-  return true;
+  return {
+    valid: true,
+    reason: 'Left click to confirm placement.',
+  };
 }
 
 function applyBuildCommand(state: GameState, config: GameConfig, command: BuildCommand) {

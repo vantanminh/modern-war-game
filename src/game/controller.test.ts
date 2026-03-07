@@ -73,4 +73,32 @@ describe('controller', () => {
     expect(model.activeWorkers).toBeGreaterThan(0);
     expect(model.projectedIncomePerSecond).toBeGreaterThan(0);
   });
+
+  it('exposes battlefield summary and blocked placement feedback in the HUD model', () => {
+    const session = new BattleSession(defaultGameConfig);
+
+    session.startBuildPlacement('barracks', { x: -1, y: 0 });
+
+    const model = session.getHudModel();
+
+    expect(model.mapName).toBe(defaultGameConfig.map.name);
+    expect(model.mapSizeLabel).toBe(`${defaultGameConfig.map.width} x ${defaultGameConfig.map.height}`);
+    expect(model.activeResourceNodes).toBe(defaultGameConfig.map.resourceNodes.length);
+    expect(model.modeLabel).toContain('blocked');
+    expect(model.modeLabel).toContain('Outside battlefield bounds.');
+  });
+
+  it('clears the current selection when cancel is pressed in normal mode', () => {
+    const session = new BattleSession(defaultGameConfig);
+    const playerUnit = Object.values(session.state.sim.units).find((unit) => unit.ownerId === 'player');
+
+    if (!playerUnit) {
+      throw new Error('Expected default battle setup');
+    }
+
+    session.setSelection([playerUnit.id]);
+    session.cancelModes();
+
+    expect(session.getHudModel().selectionTitle).toBe('No selection');
+  });
 });

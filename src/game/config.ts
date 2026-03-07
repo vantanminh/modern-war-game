@@ -236,10 +236,12 @@ function createBlockedFromAreas(
 }
 
 const obstacleAreas = [
-  { x: 18, y: 0, width: 3, height: 10 },
-  { x: 18, y: 13, width: 3, height: 15 },
-  { x: 9, y: 11, width: 4, height: 3 },
-  { x: 27, y: 14, width: 4, height: 3 },
+  { x: 22, y: 0, width: 3, height: 9 },
+  { x: 22, y: 12, width: 3, height: 20 },
+  { x: 11, y: 12, width: 5, height: 3 },
+  { x: 32, y: 17, width: 5, height: 3 },
+  { x: 18, y: 6, width: 3, height: 2 },
+  { x: 27, y: 24, width: 4, height: 2 },
 ];
 
 export const defaultGameConfig: GameConfig = {
@@ -252,31 +254,33 @@ export const defaultGameConfig: GameConfig = {
   map: {
     id: 'red-scar',
     name: 'Red Scar Crossing',
-    width: 40,
-    height: 28,
+    width: 48,
+    height: 32,
     obstacleAreas,
-    terrainBlocked: createBlockedFromAreas(40, 28, obstacleAreas),
+    terrainBlocked: createBlockedFromAreas(48, 32, obstacleAreas),
     resourceNodes: [
-      { id: 'ore-west', x: 8, y: 6, amount: 2800 },
-      { id: 'ore-east', x: 31, y: 21, amount: 2800 },
-      { id: 'ore-mid', x: 20, y: 11, amount: 1600 },
+      { id: 'ore-west', x: 9, y: 26, amount: 2800 },
+      { id: 'ore-east', x: 38, y: 5, amount: 2800 },
+      { id: 'ore-mid-north', x: 24, y: 10, amount: 1800 },
+      { id: 'ore-mid-south', x: 23, y: 21, amount: 1800 },
+      { id: 'ore-ridge', x: 16, y: 18, amount: 1400 },
     ],
     spawns: [
       {
         playerId: 'player',
         factionId: 'aurora',
-        hq: { x: 3, y: 20 },
-        refinery: { x: 6, y: 18 },
-        rally: { x: 11, y: 18 },
-        buildAnchor: { x: 10, y: 20 },
+        hq: { x: 4, y: 23 },
+        refinery: { x: 7, y: 21 },
+        rally: { x: 12, y: 21 },
+        buildAnchor: { x: 12, y: 24 },
       },
       {
         playerId: 'enemy',
         factionId: 'obsidian',
-        hq: { x: 34, y: 4 },
-        refinery: { x: 31, y: 7 },
-        rally: { x: 27, y: 9 },
-        buildAnchor: { x: 27, y: 6 },
+        hq: { x: 41, y: 4 },
+        refinery: { x: 37, y: 7 },
+        rally: { x: 33, y: 9 },
+        buildAnchor: { x: 34, y: 6 },
       },
     ],
   },
