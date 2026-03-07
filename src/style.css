@@ -129,6 +129,11 @@ p {
   gap: 10px;
 }
 
+.action-grid {
+  grid-auto-rows: minmax(0, auto);
+  align-content: start;
+}
+
 .topbar-actions {
   grid-auto-flow: column;
 }
@@ -160,13 +165,40 @@ p {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 12px 14px;
+  gap: 14px;
+  min-height: 60px;
+  padding: 14px 16px;
+  border-radius: 12px;
   text-align: left;
+  touch-action: manipulation;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.action-label,
+.action-meta {
+  display: block;
+}
+
+.action-label {
+  flex: 1;
+  font-size: 0.95rem;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.action-meta {
+  flex: 0 0 auto;
+  font-size: 0.8rem;
+  letter-spacing: 0.04em;
+  color: #9cc3e6;
+  text-transform: uppercase;
 }
 
 .action-button.active {
   border-color: rgba(134, 239, 172, 0.78);
   background: linear-gradient(180deg, rgba(17, 77, 39, 0.96), rgba(12, 49, 27, 0.98));
+  box-shadow: inset 0 0 0 1px rgba(134, 239, 172, 0.18);
 }
 
 .chrome-button:hover,
@@ -176,10 +208,31 @@ p {
   border-color: rgba(191, 219, 254, 0.42);
 }
 
+.action-button:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+.action-button:focus-visible,
+.chrome-button:focus-visible,
+.primary-button:focus-visible {
+  outline: 2px solid rgba(96, 165, 250, 0.9);
+  outline-offset: 2px;
+}
+
 .chrome-button:disabled,
 .action-button:disabled {
   opacity: 0.46;
   cursor: not-allowed;
+}
+
+.action-empty {
+  padding: 14px;
+  border: 1px dashed rgba(148, 163, 184, 0.18);
+  border-radius: 12px;
+  background: rgba(9, 16, 24, 0.6);
+  color: #88a7c5;
+  font-size: 0.82rem;
+  line-height: 1.45;
 }
 
 .tips {

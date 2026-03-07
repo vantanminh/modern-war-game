@@ -115,8 +115,145 @@ const enemyArmyOverview = document.querySelector<HTMLDivElement>('#enemy-army-ov
 const queueSection = document.querySelector<HTMLElement>('#queue-section')!;
 const queueDisplay = document.querySelector<HTMLDivElement>('#queue-display')!;
 
+const buildActionButtons = new Map<string, HTMLButtonElement>();
+const trainActionButtons = new Map<string, HTMLButtonElement>();
+
 let phaserGame: import('phaser').Game | null = null;
 let session: BattleSession | null = null;
+
+type ActionHandler = (actionId: string) => void;
+
+function getActionButton(container: HTMLDivElement, cache: Map<string, HTMLButtonElement>, actionId: string) {
+  let button = cache.get(actionId);
+  if (button) {
+    return button;
+  }
+
+  button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'action-button';
+  button.dataset.actionId = actionId;
+
+  const title = document.createElement('span');
+  title.className = 'action-label';
+  button.appendChild(title);
+
+  const meta = document.createElement('span');
+  meta.className = 'action-meta';
+  button.appendChild(meta);
+
+  cache.set(actionId, button);
+  container.appendChild(button);
+  return button;
+}
+
+function renderActionButtons(
+  container: HTMLDivElement,
+  cache: Map<string, HTMLButtonElement>,
+  actions: Array<{ id: string; label: string; cost: number; disabled: boolean; active: boolean }>,
+  emptyMessage: string,
+) {
+  const nextIds = new Set(actions.map((action) => action.id));
+
+  cache.forEach((button, actionId) => {
+    if (!nextIds.has(actionId)) {
+      button.remove();
+      cache.delete(actionId);
+    }
+  });
+
+  container.classList.toggle('action-grid-empty', actions.length === 0);
+
+  if (actions.length === 0) {
+    container.replaceChildren(createEmptyActionState(emptyMessage));
+    return;
+  }
+
+  const fragment = document.createDocumentFragment();
+  actions.forEach((action) => {
+    const button = getActionButton(container, cache, action.id);
+    button.dataset.actionId = action.id;
+    button.disabled = action.disabled;
+    button.classList.toggle('active', action.active);
+
+    const title = button.firstElementChild as HTMLSpanElement | null;
+    const meta = button.lastElementChild as HTMLSpanElement | null;
+    if (title) {
+      title.textContent = action.label;
+    }
+    if (meta) {
+      meta.textContent = `${action.cost} credits`;
+    }
+
+    fragment.appendChild(button);
+  });
+
+  container.replaceChildren(fragment);
+}
+
+function createEmptyActionState(message: string) {
+  const empty = document.createElement('div');
+  empty.className = 'action-empty';
+  empty.textContent = message;
+  return empty;
+}
+
+function handleActionContainerPress(
+  event: Event,
+  container: HTMLDivElement,
+  handler: ActionHandler,
+) {
+  const target = event.target;
+  if (!(target instanceof Element)) {
+    return;
+  }
+
+  const button = target.closest<HTMLButtonElement>('button[data-action-id]');
+  if (!button || !container.contains(button) || button.disabled) {
+    return;
+  }
+
+  const actionId = button.dataset.actionId;
+  if (!actionId) {
+    return;
+  }
+
+  handler(actionId);
+}
+
+buildActions.addEventListener('pointerdown', (event) => {
+  if (!event.isPrimary || event.button !== 0) {
+    return;
+  }
+
+  event.preventDefault();
+  handleActionContainerPress(event, buildActions, (actionId) => session?.startBuildPlacement(actionId));
+});
+
+trainActions.addEventListener('pointerdown', (event) => {
+  if (!event.isPrimary || event.button !== 0) {
+    return;
+  }
+
+  event.preventDefault();
+  handleActionContainerPress(event, trainActions, (actionId) => session?.queueSelectedBuildingUnit(actionId));
+});
+
+buildActions.addEventListener('click', (event) => {
+  if (event.detail !== 0) {
+    return;
+  }
+
+  handleActionContainerPress(event, buildActions, (actionId) => session?.startBuildPlacement(actionId));
+});
+
+trainActions.addEventListener('click', (event) => {
+  if (event.detail !== 0) {
+    return;
+  }
+
+  handleActionContainerPress(event, trainActions, (actionId) => session?.queueSelectedBuildingUnit(actionId));
+});
 
 async function mountBattle() {
   const [{ default: Phaser }, { BattleScene }] = await Promise.all([
@@ -197,29 +334,8 @@ function renderHud() {
     queueSection.classList.add('hidden');
   }
 
-  // Build actions
-  buildActions.innerHTML = '';
-  model.buildActions.forEach((action) => {
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = `action-button ${action.active ? 'active' : ''}`;
-    button.disabled = action.disabled;
-    button.innerHTML = `<span>${action.label}</span><strong>${action.cost}</strong>`;
-    button.addEventListener('click', () => session?.startBuildPlacement(action.id));
-    buildActions.appendChild(button);
-  });
-
-  // Train actions
-  trainActions.innerHTML = '';
-  model.trainActions.forEach((action) => {
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'action-button';
-    button.disabled = action.disabled;
-    button.innerHTML = `<span>${action.label}</span><strong>${action.cost}</strong>`;
-    button.addEventListener('click', () => session?.queueSelectedBuildingUnit(action.id));
-    trainActions.appendChild(button);
-  });
+  renderActionButtons(buildActions, buildActionButtons, model.buildActions, 'Need more tech or credits to construct.');
+  renderActionButtons(trainActions, trainActionButtons, model.trainActions, 'Select one completed factory to train units.');
 
   if (model.winner) {
     endOverlay.classList.remove('hidden');
