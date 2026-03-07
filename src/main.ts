@@ -162,13 +162,21 @@ function getActionButton(container: HTMLDivElement, cache: Map<string, HTMLButto
   button.className = 'action-button';
   button.dataset.actionId = actionId;
 
+  const artwork = document.createElement('span');
+  artwork.className = 'action-art';
+  button.appendChild(artwork);
+
+  const content = document.createElement('span');
+  content.className = 'action-content';
+  button.appendChild(content);
+
   const title = document.createElement('span');
   title.className = 'action-label';
-  button.appendChild(title);
+  content.appendChild(title);
 
   const meta = document.createElement('span');
   meta.className = 'action-meta';
-  button.appendChild(meta);
+  content.appendChild(meta);
 
   cache.set(actionId, button);
   container.appendChild(button);
@@ -178,7 +186,7 @@ function getActionButton(container: HTMLDivElement, cache: Map<string, HTMLButto
 function renderActionButtons(
   container: HTMLDivElement,
   cache: Map<string, HTMLButtonElement>,
-  actions: Array<{ id: string; label: string; cost: number; disabled: boolean; active: boolean }>,
+  actions: Array<{ id: string; label: string; cost: number; imagePath: string | null; disabled: boolean; active: boolean }>,
   emptyMessage: string,
 ) {
   const nextIds = new Set(actions.map((action) => action.id));
@@ -203,9 +211,14 @@ function renderActionButtons(
     button.dataset.actionId = action.id;
     button.disabled = action.disabled;
     button.classList.toggle('active', action.active);
+    button.classList.toggle('has-art', Boolean(action.imagePath));
 
-    const title = button.firstElementChild as HTMLSpanElement | null;
-    const meta = button.lastElementChild as HTMLSpanElement | null;
+    const artwork = button.querySelector<HTMLSpanElement>('.action-art');
+    const title = button.querySelector<HTMLSpanElement>('.action-label');
+    const meta = button.querySelector<HTMLSpanElement>('.action-meta');
+    if (artwork) {
+      artwork.style.backgroundImage = action.imagePath ? `url("${action.imagePath}")` : '';
+    }
     if (title) {
       title.textContent = action.label;
     }

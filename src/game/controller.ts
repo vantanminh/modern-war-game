@@ -16,6 +16,7 @@ export interface HudAction {
   id: string;
   label: string;
   cost: number;
+  imagePath: string | null;
   disabled: boolean;
   active: boolean;
 }
@@ -286,6 +287,7 @@ export class BattleSession {
             id: buildingTypeId,
             label: buildingConfig.name,
             cost: buildingConfig.cost,
+            imagePath: buildingConfig.image?.path ?? null,
             disabled:
               !canPlayerBuild(this.config, 'player', player.factionId, this.state.sim.buildings, buildingTypeId) ||
               player.resources < buildingConfig.cost,
@@ -586,6 +588,7 @@ function getTrainActions(
         id: unitTypeId,
         label: unitConfig.name,
         cost: unitConfig.cost,
+        imagePath: unitConfig.image?.path ?? null,
         disabled: building.constructionRemaining > 0 || resources < unitConfig.cost,
         active: false,
       };
