@@ -47,8 +47,8 @@ function heuristic(a: GridPoint, b: GridPoint) {
   return Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
 }
 
-function distance(a: GridPoint, b: GridPoint) {
-  return Math.hypot(a.x - b.x, a.y - b.y);
+function tileCenterDistance(point: GridPoint, target: { x: number; y: number }) {
+  return Math.hypot(point.x + 0.5 - target.x, point.y + 0.5 - target.y);
 }
 
 function reconstruct(cameFrom: Map<string, GridPoint>, current: GridPoint) {
@@ -151,56 +151,80 @@ export function findBestReachablePath(
   blocked: Set<string>,
   from: GridPoint,
   target: GridPoint,
-  searchRadius = 10,
+  _searchRadius = 10,
   maxDistanceFromTarget = Number.POSITIVE_INFINITY,
 ): ReachablePathResult | null {
   if (!inBounds(config, from)) {
     return null;
   }
 
-  let best: ReachablePathResult | null = null;
-  let bestPathLength = Infinity;
-  let bestTargetDistance = Infinity;
+  const open = [from];
+  const cameFrom = new Map<string, GridPoint>();
+  const gScore = new Map<string, number>([[key(from), 0]]);
 
-  for (let radius = 0; radius <= searchRadius; radius += 1) {
-    for (let y = target.y - radius; y <= target.y + radius; y += 1) {
-      for (let x = target.x - radius; x <= target.x + radius; x += 1) {
-        const candidate = { x, y };
-        if (!inBounds(config, candidate) || blocked.has(key(candidate))) {
-          continue;
-        }
+  let bestPoint = from;
+  let bestPathLength = 0;
+  let bestTargetDistance = tileCenterDistance(from, target);
 
-        const targetDistance = distance(candidate, target);
-        if (targetDistance > maxDistanceFromTarget) {
-          continue;
-        }
+  if (Number.isFinite(maxDistanceFromTarget) && bestTargetDistance <= maxDistanceFromTarget) {
+    return {
+      point: from,
+      path: [],
+    };
+  }
 
-        const path =
-          candidate.x === from.x && candidate.y === from.y
-            ? []
-            : findPath(config, blocked, from, candidate);
+  while (open.length > 0) {
+    open.sort((a, b) => (gScore.get(key(a)) ?? Infinity) - (gScore.get(key(b)) ?? Infinity));
+    const current = open.shift()!;
+    const currentKey = key(current);
+    const currentPathLength = gScore.get(currentKey) ?? Infinity;
+    const currentTargetDistance = tileCenterDistance(current, target);
 
-        if (path.length === 0 && (candidate.x !== from.x || candidate.y !== from.y)) {
-          continue;
-        }
-
-        if (
-          path.length < bestPathLength ||
-          (path.length === bestPathLength && targetDistance < bestTargetDistance)
-        ) {
-          best = { point: candidate, path };
-          bestPathLength = path.length;
-          bestTargetDistance = targetDistance;
-        }
-      }
+    if (
+      currentTargetDistance < bestTargetDistance ||
+      (currentTargetDistance === bestTargetDistance && currentPathLength < bestPathLength)
+    ) {
+      bestPoint = current;
+      bestPathLength = currentPathLength;
+      bestTargetDistance = currentTargetDistance;
     }
 
-    if (best) {
-      return best;
+    if (
+      Number.isFinite(maxDistanceFromTarget) &&
+      currentTargetDistance <= maxDistanceFromTarget
+    ) {
+      return {
+        point: current,
+        path: reconstruct(cameFrom, current),
+      };
+    }
+
+    for (const offset of CARDINALS) {
+      const neighbor = { x: current.x + offset.x, y: current.y + offset.y };
+      const neighborKey = key(neighbor);
+
+      if (!inBounds(config, neighbor) || blocked.has(neighborKey)) {
+        continue;
+      }
+
+      const tentative = currentPathLength + 1;
+      if (tentative >= (gScore.get(neighborKey) ?? Infinity)) {
+        continue;
+      }
+
+      cameFrom.set(neighborKey, current);
+      gScore.set(neighborKey, tentative);
+
+      if (!open.some((point) => point.x === neighbor.x && point.y === neighbor.y)) {
+        open.push(neighbor);
+      }
     }
   }
 
-  return null;
+  return {
+    point: bestPoint,
+    path: reconstruct(cameFrom, bestPoint),
+  };
 }
 
 export function findBuildSite(

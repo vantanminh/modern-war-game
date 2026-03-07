@@ -307,7 +307,7 @@ function planPathToDestination(
   sim: SimulationState,
   config: GameConfig,
   unit: UnitState,
-  destination: GridPoint,
+  destination: { x: number; y: number },
   maxDistanceFromTarget = Number.POSITIVE_INFINITY,
   preferredSearchRadius = 10,
 ) {
@@ -322,10 +322,18 @@ function planPathToDestination(
     maxDistanceFromTarget,
   );
 
+  const shouldCenterOnCurrentTile =
+    Number.isFinite(maxDistanceFromTarget) &&
+    result &&
+    result.path.length === 0 &&
+    result.point.x === origin.x &&
+    result.point.y === origin.y &&
+    Math.hypot(unit.x - destination.x, unit.y - destination.y) > maxDistanceFromTarget;
+
   return {
     blocked,
     destination: result?.point ?? destination,
-    path: result?.path ?? [],
+    path: shouldCenterOnCurrentTile ? [origin] : result?.path ?? [],
   };
 }
 
@@ -389,7 +397,7 @@ function applyAttackCommand(sim: SimulationState, config: GameConfig, command: A
         sim,
         config,
         unit,
-        roundedPoint(targetPosition),
+        targetPosition,
         unitConfig.range,
         Math.max(10, Math.ceil(unitConfig.range) + 8),
       );
@@ -397,7 +405,7 @@ function applyAttackCommand(sim: SimulationState, config: GameConfig, command: A
       unit.order = {
         kind: 'attack-target',
         targetId: command.targetId,
-        target: roundedPoint(targetPosition),
+        target: targetPosition,
         path: plan.path,
       };
       return;
@@ -663,7 +671,7 @@ function retargetPath(
   sim: SimulationState,
   config: GameConfig,
   unit: UnitState,
-  destination: GridPoint,
+  destination: { x: number; y: number },
   maxDistanceFromTarget = Number.POSITIVE_INFINITY,
   preferredSearchRadius = 10,
 ) {
@@ -727,7 +735,7 @@ function updateWorkerOrder(sim: SimulationState, config: GameConfig, unit: UnitS
     if (distance(unit, returnPoint) > refineryDropoffRange) {
       const blocked = createBlockedSet(config, sim);
       if (shouldRefreshOrderPath(sim, config, unit.order.path, blocked, false)) {
-        retargetPath(sim, config, unit, roundedPoint(returnPoint), refineryDropoffRange, 10);
+        retargetPath(sim, config, unit, returnPoint, refineryDropoffRange, 10);
       }
       moveUnitAlongPath(unit, config);
       return;
@@ -765,7 +773,7 @@ function updateUnitCombat(sim: SimulationState, config: GameConfig, unit: UnitSt
         sim,
         config,
         unit,
-        roundedPoint(targetPosition),
+        targetPosition,
         unitConfig.range,
         Math.max(10, Math.ceil(unitConfig.range) + 8),
       );

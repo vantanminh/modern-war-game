@@ -163,4 +163,72 @@ describe('simulation', () => {
     expect(enemyHQ.hp).toBeLessThan(initialHp);
     expect(playerUnit.x).toBeGreaterThan(6.1);
   });
+
+  it('moves to the nearest reachable approach tile when a wall fully blocks the clicked destination', () => {
+    const config: GameConfig = {
+      ...defaultGameConfig,
+      map: {
+        ...defaultGameConfig.map,
+        width: 30,
+        height: 15,
+        obstacleAreas: [],
+        terrainBlocked: Array.from({ length: 11 * 20 }, (_, index) => {
+          const x = 5 + (index % 20);
+          const y = 2 + Math.floor(index / 20);
+          return { x, y };
+        }),
+        resourceNodes: [
+          { id: 'ore-a', x: 2, y: 2, amount: 800 },
+          { id: 'ore-b', x: 27, y: 12, amount: 800 },
+        ],
+        spawns: [
+          {
+            playerId: 'player',
+            factionId: 'aurora',
+            hq: { x: 1, y: 10 },
+            refinery: { x: 1, y: 7 },
+            rally: { x: 2, y: 7 },
+            buildAnchor: { x: 2, y: 10 },
+          },
+          {
+            playerId: 'enemy',
+            factionId: 'obsidian',
+            hq: { x: 26, y: 1 },
+            refinery: { x: 25, y: 12 },
+            rally: { x: 24, y: 12 },
+            buildAnchor: { x: 23, y: 10 },
+          },
+        ],
+      },
+    };
+    const state = createInitialGameState(config);
+    const playerUnit = Object.values(state.sim.units).find(
+      (unit) => unit.ownerId === 'player' && unit.unitTypeId === 'vanguard',
+    );
+
+    if (!playerUnit) {
+      throw new Error('Expected player combat unit');
+    }
+
+    Object.values(state.sim.units)
+      .filter((unit) => unit.id !== playerUnit.id)
+      .forEach((unit) => delete state.sim.units[unit.id]);
+    Object.values(state.sim.buildings).forEach((building) => delete state.sim.buildings[building.id]);
+
+    playerUnit.x = 2.5;
+    playerUnit.y = 7.5;
+
+    issueCommand(state, config, {
+      type: 'move',
+      playerId: 'player',
+      unitIds: [playerUnit.id],
+      target: { x: 15, y: 7 },
+    });
+
+    stepSimulation(state, config, 80);
+
+    expect(playerUnit.x).toBeGreaterThan(3.5);
+    expect(playerUnit.x).toBeLessThan(5.5);
+    expect(Math.abs(playerUnit.y - 7.5)).toBeLessThan(1.25);
+  });
 });
