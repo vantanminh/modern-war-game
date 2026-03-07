@@ -1,12 +1,15 @@
 import Phaser from 'phaser';
 
-import { getBuildingConfig, getUnitConfig } from '../config';
+import { getBuildingConfig, getDeclaredImageAssets, getUnitConfig } from '../config';
 import type { BattleSession } from '../controller';
 import type { BuildingState, GameState, GridPoint, UnitState } from '../types';
 
+type BaseVisual = Phaser.GameObjects.Image | Phaser.GameObjects.Rectangle;
+
 interface VisualBundle {
   container: Phaser.GameObjects.Container;
-  base: Phaser.GameObjects.Rectangle;
+  base: BaseVisual;
+  frame: Phaser.GameObjects.Rectangle;
   hp: Phaser.GameObjects.Rectangle;
   cooldown: Phaser.GameObjects.Rectangle;
   cooldownBg: Phaser.GameObjects.Rectangle;
@@ -22,7 +25,7 @@ function isBuildingState(entity: UnitState | BuildingState): entity is BuildingS
 export class BattleScene extends Phaser.Scene {
   private readonly session: BattleSession;
   private readonly visuals = new Map<string, VisualBundle>();
-  private readonly resourceVisuals = new Map<string, Phaser.GameObjects.Rectangle>();
+  private readonly resourceVisuals = new Map<string, BaseVisual>();
 
   private mapGraphics?: Phaser.GameObjects.Graphics;
   private selectionBox?: Phaser.GameObjects.Graphics;
@@ -41,6 +44,14 @@ export class BattleScene extends Phaser.Scene {
   constructor(session: BattleSession) {
     super('battle');
     this.session = session;
+  }
+
+  preload() {
+    getDeclaredImageAssets(this.session.config).forEach((asset) => {
+      if (!this.textures.exists(asset.key)) {
+        this.load.image(asset.key, asset.path);
+      }
+    });
   }
 
   create() {
@@ -266,15 +277,7 @@ export class BattleScene extends Phaser.Scene {
     });
 
     Object.values(this.session.state.sim.resources).forEach((resource) => {
-      const node = this.add.rectangle(
-        resource.x * tileSize + tileSize / 2,
-        resource.y * tileSize + tileSize / 2,
-        tileSize * 0.9,
-        tileSize * 0.9,
-        0x4ade80,
-      );
-      node.setAngle(45);
-      node.setStrokeStyle(2, 0xa7f3d0, 0.9);
+      const node = this.createResourceVisual(resource.x * tileSize + tileSize / 2, resource.y * tileSize + tileSize / 2);
       this.resourceVisuals.set(resource.id, node);
     });
   }
@@ -290,10 +293,8 @@ export class BattleScene extends Phaser.Scene {
         (building.tileX + buildingConfig.footprint.width / 2) * tileSize,
         (building.tileY + buildingConfig.footprint.height / 2) * tileSize,
       );
-      bundle.base.setFillStyle(
-        building.ownerId === 'player' ? 0x58a6ff : 0xff6b6b,
-        building.constructionRemaining > 0 ? 0.5 : 0.9,
-      );
+      this.applyEntityAppearance(bundle.base, building.ownerId === 'player' ? 0xffffff : 0xffb0b0, building.ownerId === 'player' ? buildingConfig.color : 0xff6b6b, building.constructionRemaining > 0 ? 0.6 : 0.95);
+      bundle.frame.setStrokeStyle(3, 0x081019, 1);
       bundle.hp.width = Math.max(
         4,
         (building.hp / buildingConfig.maxHp) * (tileSize * buildingConfig.footprint.width - 6),
@@ -309,8 +310,8 @@ export class BattleScene extends Phaser.Scene {
         bundle.flashUntil = this.time.now + 140;
       }
       bundle.container.setPosition(unit.x * tileSize, unit.y * tileSize);
-      bundle.base.setFillStyle(unit.ownerId === 'player' ? unitConfig.color : 0xff6b6b, 0.95);
-      bundle.base.setStrokeStyle(2, bundle.flashUntil > this.time.now ? 0xfef08a : 0x081019, 1);
+      this.applyEntityAppearance(bundle.base, unit.ownerId === 'player' ? 0xffffff : 0xffb0b0, unit.ownerId === 'player' ? unitConfig.color : 0xff6b6b, 0.95);
+      bundle.frame.setStrokeStyle(2, bundle.flashUntil > this.time.now ? 0xfef08a : 0x081019, 1);
       bundle.hp.width = Math.max(3, (unit.hp / unitConfig.maxHp) * (tileSize * 0.8));
       const cooldownRatio = unitConfig.attackCooldown > 0
         ? 1 - unit.cooldownRemaining / unitConfig.attackCooldown
@@ -348,8 +349,10 @@ export class BattleScene extends Phaser.Scene {
     selection.setFillStyle(0x000000, 0);
     selection.setVisible(false);
 
-    const base = this.add.rectangle(0, 0, size, size, 0xffffff);
-    base.setStrokeStyle(2, 0x081019, 1);
+    const base = this.createUnitBaseVisual(unit, size);
+    const frame = this.add.rectangle(0, 0, size, size);
+    frame.setStrokeStyle(2, 0x081019, 1);
+    frame.setFillStyle(0x000000, 0);
 
     const hpBg = this.add.rectangle(0, -size * 0.95, size, 4, 0x111827, 0.9);
     const hp = this.add.rectangle(-size / 2, -size * 0.95, size, 4, 0x86efac, 1).setOrigin(0, 0.5);
@@ -358,8 +361,8 @@ export class BattleScene extends Phaser.Scene {
     const cooldown = this.add.rectangle(-size / 2, size * 0.86, size, 3, 0xf59e0b, 1).setOrigin(0, 0.5);
     cooldown.setVisible(false);
 
-    container.add([selection, base, hpBg, hp, cooldownBg, cooldown]);
-    const bundle = { container, base, hp, cooldown, cooldownBg, selection, lastHp: unit.hp, flashUntil: 0 };
+    container.add([selection, base, frame, hpBg, hp, cooldownBg, cooldown]);
+    const bundle = { container, base, frame, hp, cooldown, cooldownBg, selection, lastHp: unit.hp, flashUntil: 0 };
     this.visuals.set(unit.id, bundle);
     return bundle;
   }
@@ -379,8 +382,10 @@ export class BattleScene extends Phaser.Scene {
     selection.setFillStyle(0x000000, 0);
     selection.setVisible(false);
 
-    const base = this.add.rectangle(0, 0, width, height, 0xffffff);
-    base.setStrokeStyle(3, 0x081019, 1);
+    const base = this.createBuildingBaseVisual(building, width, height);
+    const frame = this.add.rectangle(0, 0, width, height);
+    frame.setStrokeStyle(3, 0x081019, 1);
+    frame.setFillStyle(0x000000, 0);
 
     const hpBg = this.add.rectangle(0, -height / 2 - 8, width, 5, 0x111827, 0.9);
     const hp = this.add.rectangle(-width / 2, -height / 2 - 8, width, 5, 0x86efac, 1).setOrigin(0, 0.5);
@@ -389,10 +394,68 @@ export class BattleScene extends Phaser.Scene {
     const cooldown = this.add.rectangle(-width / 2, height / 2 + 8, width, 3, 0x111827, 0).setOrigin(0, 0.5);
     cooldown.setVisible(false);
 
-    container.add([selection, base, hpBg, hp, cooldownBg, cooldown]);
-    const bundle = { container, base, hp, cooldown, cooldownBg, selection, lastHp: building.hp, flashUntil: 0 };
+    container.add([selection, base, frame, hpBg, hp, cooldownBg, cooldown]);
+    const bundle = { container, base, frame, hp, cooldown, cooldownBg, selection, lastHp: building.hp, flashUntil: 0 };
     this.visuals.set(building.id, bundle);
     return bundle;
+  }
+
+  private createUnitBaseVisual(unit: UnitState, size: number): BaseVisual {
+    const unitConfig = getUnitConfig(this.session.config, unit.factionId, unit.unitTypeId);
+    const image = unitConfig.image;
+
+    if (image && this.textures.exists(image.key)) {
+      const sprite = this.add.image(0, 0, image.key);
+      sprite.setDisplaySize(size, size);
+      return sprite;
+    }
+
+    return this.add.rectangle(0, 0, size, size, unitConfig.color);
+  }
+
+  private createBuildingBaseVisual(building: BuildingState, width: number, height: number): BaseVisual {
+    const buildingConfig = getBuildingConfig(this.session.config, building.factionId, building.buildingTypeId);
+    const image = buildingConfig.image;
+
+    if (image && this.textures.exists(image.key)) {
+      const sprite = this.add.image(0, 0, image.key);
+      sprite.setDisplaySize(width, height);
+      return sprite;
+    }
+
+    return this.add.rectangle(0, 0, width, height, buildingConfig.color);
+  }
+
+  private createResourceVisual(x: number, y: number): BaseVisual {
+    const image = this.session.config.resourceNodeImage;
+
+    if (this.textures.exists(image.key)) {
+      const sprite = this.add.image(x, y, image.key);
+      sprite.setDisplaySize(this.session.config.tileSize * 0.95, this.session.config.tileSize * 0.95);
+      return sprite;
+    }
+
+    const node = this.add.rectangle(
+      x,
+      y,
+      this.session.config.tileSize * 0.9,
+      this.session.config.tileSize * 0.9,
+      0x4ade80,
+    );
+    node.setAngle(45);
+    node.setStrokeStyle(2, 0xa7f3d0, 0.9);
+    return node;
+  }
+
+  private applyEntityAppearance(base: BaseVisual, imageTint: number, fallbackColor: number, alpha: number) {
+    base.setAlpha(alpha);
+
+    if (base instanceof Phaser.GameObjects.Image) {
+      base.setTint(imageTint);
+      return;
+    }
+
+    base.setFillStyle(fallbackColor, alpha);
   }
 
   private drawCombatOverlays() {

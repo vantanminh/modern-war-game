@@ -4,10 +4,20 @@ import type {
   FactionConfig,
   FactionId,
   GameConfig,
+  ImageAssetConfig,
   PlayerId,
   UnitConfig,
   UnitState,
 } from './types';
+
+type ImageCategory = 'units' | 'buildings' | 'resources';
+
+function createImageAsset(category: ImageCategory, id: string): ImageAssetConfig {
+  return {
+    key: `${category}:${id}`,
+    path: `/images/${category}/${id}.webp`,
+  };
+}
 
 const units: Record<string, UnitConfig> = {
   courier: {
@@ -26,6 +36,7 @@ const units: Record<string, UnitConfig> = {
     harvestRate: 8,
     attackBuildings: false,
     color: 0xc8f36b,
+    image: createImageAsset('units', 'courier'),
   },
   vanguard: {
     id: 'vanguard',
@@ -46,6 +57,7 @@ const units: Record<string, UnitConfig> = {
       structure: 0.75,
     },
     color: 0xe2e8f0,
+    image: createImageAsset('units', 'vanguard'),
   },
   striker: {
     id: 'striker',
@@ -66,6 +78,7 @@ const units: Record<string, UnitConfig> = {
       structure: 0.9,
     },
     color: 0xffc857,
+    image: createImageAsset('units', 'striker'),
   },
   ember: {
     id: 'ember',
@@ -86,6 +99,7 @@ const units: Record<string, UnitConfig> = {
       structure: 1.45,
     },
     color: 0xff7b72,
+    image: createImageAsset('units', 'ember'),
   },
 };
 
@@ -103,6 +117,7 @@ const buildings: Record<string, BuildingConfig> = {
     isHQ: true,
     grantsBuildIds: ['refinery', 'barracks', 'sentry'],
     color: 0x2563eb,
+    image: createImageAsset('buildings', 'command-core'),
   },
   refinery: {
     id: 'refinery',
@@ -117,6 +132,7 @@ const buildings: Record<string, BuildingConfig> = {
     grantsBuildIds: ['motor-pool'],
     requiresBuildingIds: ['command-core'],
     color: 0x22c55e,
+    image: createImageAsset('buildings', 'refinery'),
   },
   barracks: {
     id: 'barracks',
@@ -130,6 +146,7 @@ const buildings: Record<string, BuildingConfig> = {
     producesUnitIds: ['vanguard', 'ember'],
     requiresBuildingIds: ['command-core'],
     color: 0xf97316,
+    image: createImageAsset('buildings', 'barracks'),
   },
   'motor-pool': {
     id: 'motor-pool',
@@ -143,6 +160,7 @@ const buildings: Record<string, BuildingConfig> = {
     producesUnitIds: ['striker'],
     requiresBuildingIds: ['refinery'],
     color: 0xefb100,
+    image: createImageAsset('buildings', 'motor-pool'),
   },
   sentry: {
     id: 'sentry',
@@ -158,6 +176,7 @@ const buildings: Record<string, BuildingConfig> = {
     attackCooldown: 14,
     requiresBuildingIds: ['barracks'],
     color: 0x8b5cf6,
+    image: createImageAsset('buildings', 'sentry'),
   },
 };
 
@@ -229,6 +248,7 @@ export const defaultGameConfig: GameConfig = {
   factions,
   units,
   buildings,
+  resourceNodeImage: createImageAsset('resources', 'resource-node'),
   map: {
     id: 'red-scar',
     name: 'Red Scar Crossing',
@@ -272,6 +292,14 @@ export const defaultGameConfig: GameConfig = {
     pathRepathInterval: 4,
   },
 };
+
+export function getDeclaredImageAssets(config: GameConfig): ImageAssetConfig[] {
+  return [
+    ...Object.values(config.units).flatMap((unit) => (unit.image ? [unit.image] : [])),
+    ...Object.values(config.buildings).flatMap((building) => (building.image ? [building.image] : [])),
+    config.resourceNodeImage,
+  ];
+}
 
 export function getUnitConfig(
   config: GameConfig,

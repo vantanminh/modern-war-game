@@ -41,6 +41,7 @@ export interface UnitConfig {
   attackBias?: Partial<Record<ArmorType, number>>;
   attackBuildings?: boolean;
   color: number;
+  image?: ImageAssetConfig;
 }
 
 export interface BuildingConfig {
@@ -65,6 +66,12 @@ export interface BuildingConfig {
   requiresBuildingIds?: string[];
   powerDelta?: number;
   color: number;
+  image?: ImageAssetConfig;
+}
+
+export interface ImageAssetConfig {
+  key: string;
+  path: string;
 }
 
 export interface UnitStatModifier {
@@ -143,6 +150,7 @@ export interface GameConfig {
   factions: Record<FactionId, FactionConfig>;
   units: Record<string, UnitConfig>;
   buildings: Record<string, BuildingConfig>;
+  resourceNodeImage: ImageAssetConfig;
   map: MapConfig;
   ai: AiConfig;
 }
