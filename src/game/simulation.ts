@@ -877,8 +877,7 @@ function updateWorkerOrder(sim: SimulationState, config: GameConfig, unit: UnitS
       return;
     }
 
-    const gathered = Math.min(unitConfig.harvestRate ?? 0, resource.amount);
-    resource.amount -= gathered;
+    const gathered = unitConfig.harvestRate ?? 0;
     unit.cargo += gathered;
     if (unit.cargo >= (unitConfig.carryCapacity ?? 0)) {
       unit.order.kind = 'return';

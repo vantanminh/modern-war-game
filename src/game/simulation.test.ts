@@ -51,7 +51,7 @@ describe('simulation', () => {
 
     expect(state.sim.players.player.resources).toBeGreaterThan(initialResources);
     expect(state.sim.players.player.incomePerSecond).toBeGreaterThanOrEqual(0);
-    expect(state.sim.resources['ore-west'].amount).toBeLessThan(initialOre);
+    expect(state.sim.resources['ore-west'].amount).toBe(initialOre);
   });
 
   it('buffers refinery income and credits it on second boundaries', () => {
