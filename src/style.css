@@ -1,0 +1,242 @@
+:root {
+  color: #e5eef7;
+  background:
+    radial-gradient(circle at top left, rgba(88, 166, 255, 0.22), transparent 24%),
+    radial-gradient(circle at top right, rgba(249, 115, 22, 0.12), transparent 26%),
+    linear-gradient(180deg, #07111b 0%, #050b11 100%);
+  color-scheme: dark;
+  font-family: Bahnschrift, 'Arial Narrow', sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+}
+
+button {
+  font: inherit;
+}
+
+#app {
+  min-height: 100vh;
+}
+
+.shell {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  min-height: 100vh;
+  padding: 18px;
+  gap: 16px;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px 22px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  background: linear-gradient(135deg, rgba(15, 23, 34, 0.94), rgba(10, 16, 24, 0.85));
+  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.28);
+}
+
+.topbar h1,
+.overlay-card h2,
+.panel h2,
+.panel h3,
+p {
+  margin: 0;
+}
+
+.eyebrow,
+.panel-label {
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  font-size: 0.72rem;
+  color: #8fb4d8;
+}
+
+.board {
+  display: grid;
+  grid-template-columns: 270px minmax(760px, 1fr) 300px;
+  gap: 16px;
+}
+
+.panel {
+  display: grid;
+  gap: 16px;
+  align-content: start;
+  padding: 18px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  background: linear-gradient(180deg, rgba(12, 20, 30, 0.95), rgba(8, 13, 19, 0.9));
+}
+
+.panel section {
+  display: grid;
+  gap: 10px;
+}
+
+.viewport {
+  position: relative;
+  min-height: 780px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  overflow: hidden;
+  background: linear-gradient(180deg, rgba(7, 15, 22, 0.88), rgba(9, 14, 20, 0.92));
+}
+
+#game-root,
+#game-root canvas {
+  width: 100%;
+  height: 100%;
+}
+
+.overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(4, 8, 12, 0.62);
+  backdrop-filter: blur(4px);
+  z-index: 5;
+}
+
+.overlay-card {
+  width: min(420px, calc(100% - 48px));
+  display: grid;
+  gap: 14px;
+  padding: 26px;
+  border: 1px solid rgba(147, 197, 253, 0.28);
+  background: linear-gradient(180deg, rgba(12, 19, 29, 0.98), rgba(8, 14, 21, 0.94));
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.38);
+}
+
+.hidden {
+  display: none;
+}
+
+.topbar-actions,
+.action-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.topbar-actions {
+  grid-auto-flow: column;
+}
+
+.chrome-button,
+.primary-button,
+.action-button {
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  color: #ecf4fb;
+  cursor: pointer;
+  background: linear-gradient(180deg, rgba(28, 42, 58, 0.96), rgba(14, 24, 34, 0.98));
+  transition:
+    transform 140ms ease,
+    border-color 140ms ease,
+    background 140ms ease;
+}
+
+.chrome-button,
+.primary-button {
+  padding: 11px 16px;
+}
+
+.primary-button {
+  background: linear-gradient(180deg, #1d4ed8, #143a8e);
+  border-color: rgba(191, 219, 254, 0.38);
+}
+
+.action-button {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 14px;
+  text-align: left;
+}
+
+.action-button.active {
+  border-color: rgba(134, 239, 172, 0.78);
+  background: linear-gradient(180deg, rgba(17, 77, 39, 0.96), rgba(12, 49, 27, 0.98));
+}
+
+.chrome-button:hover,
+.primary-button:hover,
+.action-button:hover:not(:disabled) {
+  transform: translateY(-1px);
+  border-color: rgba(191, 219, 254, 0.42);
+}
+
+.chrome-button:disabled,
+.action-button:disabled {
+  opacity: 0.46;
+  cursor: not-allowed;
+}
+
+.tips {
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  bottom: 14px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  z-index: 3;
+}
+
+.tips span {
+  padding: 7px 10px;
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  background: rgba(8, 14, 21, 0.72);
+  font-size: 0.78rem;
+  letter-spacing: 0.05em;
+}
+
+@media (max-width: 1180px) {
+  .board {
+    grid-template-columns: 1fr;
+  }
+
+  .panel-left,
+  .panel-right {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .viewport {
+    min-height: 60vh;
+  }
+}
+
+@media (max-width: 760px) {
+  .shell {
+    padding: 12px;
+  }
+
+  .topbar,
+  .topbar-actions,
+  .panel-left,
+  .panel-right {
+    grid-template-columns: 1fr;
+  }
+
+  .topbar {
+    align-items: start;
+  }
+
+  .topbar-actions {
+    width: 100%;
+  }
+
+  .viewport {
+    min-height: 52vh;
+  }
+}
