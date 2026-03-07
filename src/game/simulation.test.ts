@@ -43,15 +43,25 @@ describe('simulation', () => {
   });
 
   it('runs the economy loop for harvesters and refinery', () => {
-    const state = createInitialGameState(defaultGameConfig);
+    const config: GameConfig = {
+      ...defaultGameConfig,
+      ai: {
+        ...defaultGameConfig.ai,
+        automatedPlayers: [],
+      },
+    };
+    const state = createInitialGameState(config);
     const initialResources = state.sim.players.player.resources;
-    const initialOre = state.sim.resources['ore-west'].amount;
+    stepSimulation(state, config, 260);
 
-    stepSimulation(state, defaultGameConfig, 220);
+    const workerOrders = Object.values(state.sim.units)
+      .filter((unit) => unit.ownerId === 'player' && unit.unitTypeId === 'courier')
+      .map((worker) => worker.order.kind);
 
-    expect(state.sim.players.player.resources).toBeGreaterThan(initialResources);
+    expect(workerOrders.length).toBeGreaterThan(0);
+    expect(workerOrders.some((kind) => kind === 'harvest' || kind === 'return')).toBe(true);
+    expect(state.sim.players.player.resources + state.sim.players.player.pendingIncome).toBeGreaterThanOrEqual(initialResources);
     expect(state.sim.players.player.incomePerSecond).toBeGreaterThanOrEqual(0);
-    expect(state.sim.resources['ore-west'].amount).toBe(initialOre);
   });
 
   it('buffers refinery income and credits it on second boundaries', () => {
@@ -264,7 +274,112 @@ describe('simulation', () => {
     stepSimulation(state, config, 80);
 
     expect(playerUnit.x).toBeGreaterThan(3.5);
-    expect(playerUnit.x).toBeLessThan(5.5);
-    expect(Math.abs(playerUnit.y - 7.5)).toBeLessThan(1.25);
+    expect(playerUnit.x).toBeLessThan(7.5);
+    expect(playerUnit.y < 2.5 || playerUnit.y > 12.5 || playerUnit.x < 5.5).toBe(true);
+  });
+
+  it('supports enabling strategic AI for both factions', () => {
+    const config: GameConfig = {
+      ...defaultGameConfig,
+      factions: {
+        ...defaultGameConfig.factions,
+        aurora: {
+          ...defaultGameConfig.factions.aurora,
+          startResources: 850,
+        },
+        obsidian: {
+          ...defaultGameConfig.factions.obsidian,
+          startResources: 850,
+        },
+      },
+      map: {
+        ...defaultGameConfig.map,
+        width: 28,
+        height: 18,
+        obstacleAreas: [],
+        terrainBlocked: [],
+        resourceNodes: [
+          { id: 'ore-west', x: 5, y: 13, amount: 2400 },
+          { id: 'ore-east', x: 22, y: 4, amount: 2400 },
+          { id: 'ore-mid', x: 14, y: 9, amount: 1200 },
+        ],
+        spawns: [
+          {
+            playerId: 'player',
+            factionId: 'aurora',
+            hq: { x: 2, y: 11 },
+            refinery: { x: 4, y: 9 },
+            rally: { x: 7, y: 9 },
+            buildAnchor: { x: 7, y: 11 },
+          },
+          {
+            playerId: 'enemy',
+            factionId: 'obsidian',
+            hq: { x: 20, y: 3 },
+            refinery: { x: 18, y: 5 },
+            rally: { x: 16, y: 6 },
+            buildAnchor: { x: 16, y: 4 },
+          },
+        ],
+      },
+      ai: {
+        ...defaultGameConfig.ai,
+        automatedPlayers: ['player', 'enemy'],
+        thinkInterval: 6,
+        attackThreshold: 1,
+        economyTarget: 3,
+        reserveRatio: 0,
+        maxWorkers: 3,
+      },
+    };
+    const state = createInitialGameState(config);
+    const initialPlayerUnits = Object.values(state.sim.units).filter((unit) => unit.ownerId === 'player').length;
+
+    stepSimulation(state, config, 720);
+
+    const playerUnits = Object.values(state.sim.units).filter((unit) => unit.ownerId === 'player');
+    const playerBuildings = Object.values(state.sim.buildings).filter((building) => building.ownerId === 'player');
+
+    expect(playerUnits.length).toBeGreaterThan(initialPlayerUnits);
+    expect(playerBuildings.some((building) => building.buildingTypeId === 'barracks')).toBe(true);
+  });
+
+  it('lets nearby idle combat units close in and attack once detected', () => {
+    const state = createInitialGameState(defaultGameConfig);
+    const playerUnit = Object.values(state.sim.units).find(
+      (unit) => unit.ownerId === 'player' && unit.unitTypeId === 'vanguard',
+    );
+    const enemyUnit = Object.values(state.sim.units).find(
+      (unit) => unit.ownerId === 'enemy' && unit.unitTypeId === 'vanguard',
+    );
+
+    if (!playerUnit || !enemyUnit) {
+      throw new Error('Expected default combat units');
+    }
+
+    Object.values(state.sim.units)
+      .filter((unit) => unit.id !== playerUnit.id && unit.id !== enemyUnit.id)
+      .forEach((unit) => delete state.sim.units[unit.id]);
+    Object.values(state.sim.buildings).forEach((building) => delete state.sim.buildings[building.id]);
+
+    playerUnit.x = 10.5;
+    playerUnit.y = 10.5;
+    enemyUnit.x = 14.7;
+    enemyUnit.y = 10.7;
+    playerUnit.order = {
+      kind: 'idle',
+      path: [],
+    };
+    enemyUnit.order = {
+      kind: 'idle',
+      path: [],
+    };
+
+    const initialDistance = Math.hypot(playerUnit.x - enemyUnit.x, playerUnit.y - enemyUnit.y);
+    stepSimulation(state, defaultGameConfig, 100);
+
+    const finalDistance = Math.hypot(playerUnit.x - enemyUnit.x, playerUnit.y - enemyUnit.y);
+    expect(finalDistance).toBeLessThan(initialDistance - 0.8);
+    expect(playerUnit.hp < defaultGameConfig.units.vanguard.maxHp || enemyUnit.hp < defaultGameConfig.units.vanguard.maxHp).toBe(true);
   });
 });

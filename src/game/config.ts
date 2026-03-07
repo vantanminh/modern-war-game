@@ -286,6 +286,7 @@ export const defaultGameConfig: GameConfig = {
   },
   ai: {
     thinkInterval: 8,
+    automatedPlayers: ['enemy'],
     attackThreshold: 3,
     economyTarget: 5,
     defenseRadius: 10,
@@ -294,6 +295,9 @@ export const defaultGameConfig: GameConfig = {
     maxWorkers: 6,
     expandResourceThreshold: 900,
     pathRepathInterval: 4,
+    pathStuckThreshold: 8,
+    targetSearchInterval: 3,
+    proximityVisionBonus: 1.35,
   },
 };
 

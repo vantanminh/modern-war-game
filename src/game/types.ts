@@ -134,6 +134,7 @@ export interface MapConfig {
 
 export interface AiConfig {
   thinkInterval: number;
+  automatedPlayers: PlayerId[];
   attackThreshold: number;
   economyTarget: number;
   defenseRadius: number;
@@ -142,6 +143,9 @@ export interface AiConfig {
   maxWorkers: number;
   expandResourceThreshold: number;
   pathRepathInterval: number;
+  pathStuckThreshold: number;
+  targetSearchInterval: number;
+  proximityVisionBonus: number;
 }
 
 export interface GameConfig {

@@ -5,11 +5,23 @@ export interface ReachablePathResult {
   path: GridPoint[];
 }
 
-const CARDINALS: GridPoint[] = [
-  { x: 1, y: 0 },
-  { x: -1, y: 0 },
-  { x: 0, y: 1 },
-  { x: 0, y: -1 },
+interface NeighborOffset {
+  dx: number;
+  dy: number;
+  cost: number;
+}
+
+const CARDINAL_COST = 1;
+const DIAGONAL_COST = Math.SQRT2;
+const NEIGHBOR_OFFSETS: NeighborOffset[] = [
+  { dx: 1, dy: 0, cost: CARDINAL_COST },
+  { dx: -1, dy: 0, cost: CARDINAL_COST },
+  { dx: 0, dy: 1, cost: CARDINAL_COST },
+  { dx: 0, dy: -1, cost: CARDINAL_COST },
+  { dx: 1, dy: 1, cost: DIAGONAL_COST },
+  { dx: 1, dy: -1, cost: DIAGONAL_COST },
+  { dx: -1, dy: 1, cost: DIAGONAL_COST },
+  { dx: -1, dy: -1, cost: DIAGONAL_COST },
 ];
 
 const terrainBlockedCache = new WeakMap<GameConfig, Set<string>>();
@@ -93,7 +105,11 @@ export function createBlockedSet(config: GameConfig, sim: SimulationState, ignor
 }
 
 function heuristic(a: GridPoint, b: GridPoint) {
-  return Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
+  const dx = Math.abs(a.x - b.x);
+  const dy = Math.abs(a.y - b.y);
+  const diagonalSteps = Math.min(dx, dy);
+  const cardinalSteps = Math.max(dx, dy) - diagonalSteps;
+  return diagonalSteps * DIAGONAL_COST + cardinalSteps * CARDINAL_COST;
 }
 
 function tileCenterDistance(point: GridPoint, target: { x: number; y: number }) {
@@ -111,6 +127,102 @@ function reconstruct(cameFrom: Map<string, GridPoint>, current: GridPoint) {
 
   path.reverse();
   return path.slice(1);
+}
+
+function isBlockedOrOutOfBounds(config: GameConfig, blocked: Set<string>, point: GridPoint) {
+  return !inBounds(config, point) || blocked.has(key(point));
+}
+
+function canTraverseStep(
+  config: GameConfig,
+  blocked: Set<string>,
+  from: GridPoint,
+  to: GridPoint,
+) {
+  if (isBlockedOrOutOfBounds(config, blocked, to)) {
+    return false;
+  }
+
+  const deltaX = to.x - from.x;
+  const deltaY = to.y - from.y;
+  const isDiagonal = Math.abs(deltaX) === 1 && Math.abs(deltaY) === 1;
+
+  if (!isDiagonal) {
+    return true;
+  }
+
+  // Prevent clipping through tight corners when navigating around walls/buildings.
+  const sideA = { x: from.x + deltaX, y: from.y };
+  const sideB = { x: from.x, y: from.y + deltaY };
+  return !isBlockedOrOutOfBounds(config, blocked, sideA) && !isBlockedOrOutOfBounds(config, blocked, sideB);
+}
+
+function hasLineOfSight(
+  config: GameConfig,
+  blocked: Set<string>,
+  from: GridPoint,
+  to: GridPoint,
+) {
+  if (from.x === to.x && from.y === to.y) {
+    return true;
+  }
+
+  let current = from;
+  const deltaX = to.x - from.x;
+  const deltaY = to.y - from.y;
+  const steps = Math.max(Math.abs(deltaX), Math.abs(deltaY));
+
+  for (let step = 1; step <= steps; step += 1) {
+    const ratio = step / steps;
+    const next = {
+      x: Math.round(from.x + deltaX * ratio),
+      y: Math.round(from.y + deltaY * ratio),
+    };
+
+    if (next.x === current.x && next.y === current.y) {
+      continue;
+    }
+
+    if (!canTraverseStep(config, blocked, current, next)) {
+      return false;
+    }
+
+    current = next;
+  }
+
+  return true;
+}
+
+export function smoothPath(
+  config: GameConfig,
+  blocked: Set<string>,
+  from: GridPoint,
+  path: GridPoint[],
+) {
+  if (path.length <= 1) {
+    return path;
+  }
+
+  const smoothed: GridPoint[] = [];
+  let anchor = from;
+  let index = 0;
+
+  while (index < path.length) {
+    let furthest = index;
+
+    for (let cursor = index; cursor < path.length; cursor += 1) {
+      if (!hasLineOfSight(config, blocked, anchor, path[cursor])) {
+        break;
+      }
+      furthest = cursor;
+    }
+
+    smoothed.push(path[furthest]);
+    anchor = path[furthest];
+    index = furthest + 1;
+  }
+
+  return smoothed;
 }
 
 export function findPath(
@@ -145,15 +257,15 @@ export function findPath(
 
     closed.add(currentKey);
 
-    for (const offset of CARDINALS) {
-      const neighbor = { x: current.x + offset.x, y: current.y + offset.y };
+    for (const offset of NEIGHBOR_OFFSETS) {
+      const neighbor = { x: current.x + offset.dx, y: current.y + offset.dy };
       const neighborKey = key(neighbor);
 
-      if (!inBounds(config, neighbor) || blocked.has(neighborKey) || closed.has(neighborKey)) {
+      if (closed.has(neighborKey) || !canTraverseStep(config, blocked, current, neighbor)) {
         continue;
       }
 
-      const tentative = (gScore.get(currentKey) ?? Infinity) + 1;
+      const tentative = (gScore.get(currentKey) ?? Infinity) + offset.cost;
       if (tentative >= (gScore.get(neighborKey) ?? Infinity)) {
         continue;
       }
@@ -216,7 +328,7 @@ export function findBestReachablePath(
   const fScore = new Map<string, number>([[key(from), tileCenterDistance(from, target)]]);
 
   let bestPoint = from;
-  let bestPathLength = 0;
+  let bestPathLength = Infinity;
   let bestTargetDistance = tileCenterDistance(from, target);
 
   if (Number.isFinite(maxDistanceFromTarget) && bestTargetDistance <= maxDistanceFromTarget) {
@@ -252,15 +364,15 @@ export function findBestReachablePath(
       };
     }
 
-    for (const offset of CARDINALS) {
-      const neighbor = { x: current.x + offset.x, y: current.y + offset.y };
+    for (const offset of NEIGHBOR_OFFSETS) {
+      const neighbor = { x: current.x + offset.dx, y: current.y + offset.dy };
       const neighborKey = key(neighbor);
 
-      if (!inBounds(config, neighbor) || blocked.has(neighborKey)) {
+      if (!canTraverseStep(config, blocked, current, neighbor)) {
         continue;
       }
 
-      const tentative = currentPathLength + 1;
+      const tentative = currentPathLength + offset.cost;
       if (tentative >= (gScore.get(neighborKey) ?? Infinity)) {
         continue;
       }

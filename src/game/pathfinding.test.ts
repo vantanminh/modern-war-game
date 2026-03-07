@@ -83,4 +83,26 @@ describe('pathfinding', () => {
     expect(Math.hypot((plan?.point.x ?? 0) - 10, (plan?.point.y ?? 0) - 4)).toBeLessThanOrEqual(3.2);
     expect(plan?.path.length).toBeGreaterThan(0);
   });
+
+  it('does not cut diagonally through blocked corners', () => {
+    const config = {
+      ...defaultGameConfig,
+      map: {
+        ...defaultGameConfig.map,
+        width: 5,
+        height: 5,
+        terrainBlocked: [
+          { x: 1, y: 2 },
+          { x: 2, y: 1 },
+        ],
+        obstacleAreas: [],
+      },
+    };
+    const blocked = new Set(config.map.terrainBlocked.map((point) => `${point.x},${point.y}`));
+
+    const path = findPath(config, blocked, { x: 1, y: 1 }, { x: 3, y: 3 });
+
+    expect(path).not.toContainEqual({ x: 2, y: 2 });
+    expect(path.length).toBeGreaterThan(3);
+  });
 });

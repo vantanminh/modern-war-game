@@ -13,6 +13,7 @@ import {
   findBuildSite,
   findPath,
   nearestReachablePoint,
+  smoothPath,
   toTileKey,
 } from './pathfinding';
 import type {
@@ -52,8 +53,16 @@ interface SimulationTickCache {
   targetsByOwner?: Record<PlayerId, TargetBuckets>;
 }
 
+interface UnitNavigationState {
+  lastX: number;
+  lastY: number;
+  stuckTicks: number;
+  lastWaypointKey: string | null;
+}
+
 const simulationTickCaches = new WeakMap<SimulationState, SimulationTickCache>();
 const resourceTileCaches = new WeakMap<GameConfig, Set<string>>();
+const unitNavigationStates = new WeakMap<SimulationState, Map<string, UnitNavigationState>>();
 
 function hashString(value: string) {
   let hash = 0;
@@ -77,6 +86,42 @@ function getSimulationTickCache(sim: SimulationState) {
   };
   simulationTickCaches.set(sim, nextCache);
   return nextCache;
+}
+
+function getUnitNavigationState(sim: SimulationState, unit: UnitState) {
+  let states = unitNavigationStates.get(sim);
+  if (!states) {
+    states = new Map<string, UnitNavigationState>();
+    unitNavigationStates.set(sim, states);
+  }
+
+  let nav = states.get(unit.id);
+  if (!nav) {
+    nav = {
+      lastX: unit.x,
+      lastY: unit.y,
+      stuckTicks: 0,
+      lastWaypointKey: unit.order.path[0]
+        ? toTileKey(unit.order.path[0].x, unit.order.path[0].y)
+        : null,
+    };
+    states.set(unit.id, nav);
+  }
+
+  return nav;
+}
+
+function pruneUnitNavigationState(sim: SimulationState) {
+  const states = unitNavigationStates.get(sim);
+  if (!states) {
+    return;
+  }
+
+  for (const unitId of states.keys()) {
+    if (!sim.units[unitId]) {
+      states.delete(unitId);
+    }
+  }
 }
 
 function invalidateBlockedSetCache(sim: SimulationState) {
@@ -465,10 +510,12 @@ function planPathToDestination(
     result.point.y === origin.y &&
     Math.hypot(unit.x - destination.x, unit.y - destination.y) > maxDistanceFromTarget;
 
+  const path = shouldCenterOnCurrentTile ? [origin] : result?.path ?? [];
+
   return {
     blocked,
     destination: result?.point ?? destination,
-    path: shouldCenterOnCurrentTile ? [origin] : result?.path ?? [],
+    path: smoothPath(config, blocked, origin, path),
   };
 }
 
@@ -770,44 +817,59 @@ function updateProduction(sim: SimulationState, config: GameConfig) {
   });
 }
 
+interface EnemyTargetCandidate {
+  id: string;
+  distance: number;
+  inAttackRange: boolean;
+}
+
 function findNearestEnemyTarget(
   sim: SimulationState,
   config: GameConfig,
   ownerId: PlayerId,
   position: { x: number; y: number },
-  range: number,
+  attackRange: number,
+  detectionRange: number,
   canAttackBuildings: boolean,
-) {
+): EnemyTargetCandidate | null {
   const targets = getTargetsByOwner(sim, ownerId);
-  let bestId: string | null = null;
+  let best: EnemyTargetCandidate | null = null;
   let bestDistance = Infinity;
 
   targets.units.forEach((unit) => {
     const currentDistance = distance(position, unit);
-    if (currentDistance <= range && currentDistance < bestDistance) {
+    if (currentDistance <= detectionRange && currentDistance < bestDistance) {
       bestDistance = currentDistance;
-      bestId = unit.id;
+      best = {
+        id: unit.id,
+        distance: currentDistance,
+        inAttackRange: currentDistance <= attackRange,
+      };
     }
   });
 
-  if (bestId || !canAttackBuildings) {
-    return bestId;
+  if (best || !canAttackBuildings) {
+    return best;
   }
 
   targets.buildings.forEach((building) => {
     const currentDistance = distance(position, centerOfBuilding(building, config));
-    if (currentDistance <= range && currentDistance < bestDistance) {
+    if (currentDistance <= detectionRange && currentDistance < bestDistance) {
       bestDistance = currentDistance;
-      bestId = building.id;
+      best = {
+        id: building.id,
+        distance: currentDistance,
+        inAttackRange: currentDistance <= attackRange,
+      };
     }
   });
 
-  return bestId;
+  return best;
 }
 
 function moveUnitAlongPath(unit: UnitState, config: GameConfig) {
   if (unit.order.path.length === 0) {
-    return;
+    return false;
   }
 
   const stepDistance = getUnitConfig(config, unit.factionId, unit.unitTypeId).speed / config.tickRate;
@@ -822,11 +884,63 @@ function moveUnitAlongPath(unit: UnitState, config: GameConfig) {
     unit.x = targetX;
     unit.y = targetY;
     unit.order.path.shift();
-    return;
+    return true;
   }
 
   unit.x += (dx / remaining) * stepDistance;
   unit.y += (dy / remaining) * stepDistance;
+  return true;
+}
+
+function trackNavigationProgress(sim: SimulationState, config: GameConfig, unit: UnitState) {
+  const nav = getUnitNavigationState(sim, unit);
+  const movedDistance = Math.hypot(unit.x - nav.lastX, unit.y - nav.lastY);
+  const waypointKey = unit.order.path[0] ? toTileKey(unit.order.path[0].x, unit.order.path[0].y) : null;
+  const movedEnough = movedDistance >= Math.max(0.035, 0.35 / config.tickRate);
+
+  if (unit.order.path.length === 0) {
+    nav.stuckTicks = 0;
+  } else if (movedEnough || waypointKey !== nav.lastWaypointKey) {
+    nav.stuckTicks = 0;
+  } else {
+    nav.stuckTicks += 1;
+  }
+
+  nav.lastX = unit.x;
+  nav.lastY = unit.y;
+  nav.lastWaypointKey = waypointKey;
+
+  return nav.stuckTicks >= config.ai.pathStuckThreshold;
+}
+
+function getUnitDetectionRange(config: GameConfig, unitConfig: UnitConfig) {
+  const proximity = Math.max(2.25, unitConfig.range * config.ai.proximityVisionBonus);
+  return Math.max(unitConfig.range + 0.35, proximity);
+}
+
+function refreshUnitPathIfStuck(
+  sim: SimulationState,
+  config: GameConfig,
+  unit: UnitState,
+  maxDistanceFromTarget = Number.POSITIVE_INFINITY,
+  preferredSearchRadius = 10,
+) {
+  if (!unit.order.target) {
+    return;
+  }
+
+  const isStuck = trackNavigationProgress(sim, config, unit);
+  if (!isStuck) {
+    return;
+  }
+
+  const blocked = getBlockedSetForTick(config, sim);
+  if (unit.order.path.length > 1 && !blocked.has(toTileKey(unit.order.path[1].x, unit.order.path[1].y))) {
+    unit.order.path.shift();
+    return;
+  }
+
+  retargetPath(sim, config, unit, unit.order.target, maxDistanceFromTarget, preferredSearchRadius);
 }
 
 function retargetPath(
@@ -870,10 +984,12 @@ function updateWorkerOrder(sim: SimulationState, config: GameConfig, unit: UnitS
     const resourcePoint = { x: Math.round(resource.x), y: Math.round(resource.y) };
     if (distance(unit, resource) > 0.8) {
       const blocked = getBlockedSetForTick(config, sim);
-      if (shouldRefreshOrderPath(sim, config, unit.id, unit.order.path, blocked, false)) {
+      if (shouldRefreshOrderPath(sim, config, unit.id, unit.order.path, blocked, true)) {
         retargetPath(sim, config, unit, resourcePoint);
       }
-      moveUnitAlongPath(unit, config);
+      if (moveUnitAlongPath(unit, config)) {
+        refreshUnitPathIfStuck(sim, config, unit, Number.POSITIVE_INFINITY, 10);
+      }
       return;
     }
 
@@ -895,10 +1011,12 @@ function updateWorkerOrder(sim: SimulationState, config: GameConfig, unit: UnitS
     const returnPoint = centerOfBuilding(refinery, config);
     if (distance(unit, returnPoint) > refineryDropoffRange) {
       const blocked = getBlockedSetForTick(config, sim);
-      if (shouldRefreshOrderPath(sim, config, unit.id, unit.order.path, blocked, false)) {
+      if (shouldRefreshOrderPath(sim, config, unit.id, unit.order.path, blocked, true)) {
         retargetPath(sim, config, unit, returnPoint, refineryDropoffRange, 10);
       }
-      moveUnitAlongPath(unit, config);
+      if (moveUnitAlongPath(unit, config)) {
+        refreshUnitPathIfStuck(sim, config, unit, refineryDropoffRange, 10);
+      }
       return;
     }
 
@@ -927,6 +1045,7 @@ function payoutIncome(sim: SimulationState, config: GameConfig) {
 function updateUnitCombat(sim: SimulationState, config: GameConfig, unit: UnitState) {
   const unitConfig = getUnitConfig(config, unit.factionId, unit.unitTypeId);
   unit.cooldownRemaining = Math.max(0, unit.cooldownRemaining - 1);
+  const detectionRange = getUnitDetectionRange(config, unitConfig);
 
   if (unit.order.kind === 'attack-target' && unit.order.targetId) {
     const targetPosition = getEntityPosition(sim, config, unit.order.targetId);
@@ -954,30 +1073,74 @@ function updateUnitCombat(sim: SimulationState, config: GameConfig, unit: UnitSt
         Math.max(10, Math.ceil(unitConfig.range) + 8),
       );
     }
-    moveUnitAlongPath(unit, config);
+    if (moveUnitAlongPath(unit, config)) {
+      refreshUnitPathIfStuck(
+        sim,
+        config,
+        unit,
+        unitConfig.range,
+        Math.max(10, Math.ceil(unitConfig.range) + 8),
+      );
+    }
     return;
   }
 
   const shouldScanForTargets =
     unit.cooldownRemaining === 0 ||
     unit.order.kind === 'attack-move' ||
-    (sim.tick + hashString(unit.id)) % Math.max(2, Math.floor(config.ai.pathRepathInterval / 2)) === 0;
+    (sim.tick + hashString(unit.id)) % Math.max(2, config.ai.targetSearchInterval) === 0;
 
-  const nearbyEnemyId = shouldScanForTargets
+  const nearbyEnemy = shouldScanForTargets
     ? findNearestEnemyTarget(
         sim,
         config,
         unit.ownerId,
         unit,
         unitConfig.range,
+        detectionRange,
         unitConfig.attackBuildings ?? true,
       )
     : null;
 
-  if (nearbyEnemyId && unit.cooldownRemaining === 0) {
-    applyDamage(sim, config, unitConfig, nearbyEnemyId);
+  if (nearbyEnemy && nearbyEnemy.inAttackRange && unit.cooldownRemaining === 0) {
+    applyDamage(sim, config, unitConfig, nearbyEnemy.id);
     unit.cooldownRemaining = unitConfig.attackCooldown;
     return;
+  }
+
+  if (
+    nearbyEnemy &&
+    unit.order.kind !== 'attack-target' &&
+    unit.order.kind !== 'harvest' &&
+    unit.order.kind !== 'return'
+  ) {
+    const targetPosition = getEntityPosition(sim, config, nearbyEnemy.id);
+    if (targetPosition) {
+      unit.order = {
+        kind: 'attack-target',
+        targetId: nearbyEnemy.id,
+        target: targetPosition,
+        path: unit.order.path,
+      };
+      retargetPath(
+        sim,
+        config,
+        unit,
+        targetPosition,
+        unitConfig.range,
+        Math.max(10, Math.ceil(detectionRange) + 6),
+      );
+      if (moveUnitAlongPath(unit, config)) {
+        refreshUnitPathIfStuck(
+          sim,
+          config,
+          unit,
+          unitConfig.range,
+          Math.max(10, Math.ceil(detectionRange) + 6),
+        );
+      }
+      return;
+    }
   }
 
   if (unit.order.kind === 'move' || unit.order.kind === 'attack-move') {
@@ -985,11 +1148,16 @@ function updateUnitCombat(sim: SimulationState, config: GameConfig, unit: UnitSt
     if (unit.order.target && shouldRefreshOrderPath(sim, config, unit.id, unit.order.path, blocked)) {
       retargetPath(sim, config, unit, unit.order.target);
     }
-    moveUnitAlongPath(unit, config);
+    if (moveUnitAlongPath(unit, config)) {
+      refreshUnitPathIfStuck(sim, config, unit);
+    }
     if (unit.order.path.length === 0 && unit.order.kind === 'move') {
       unit.order = initialUnitOrder();
     }
+    return;
   }
+
+  trackNavigationProgress(sim, config, unit);
 }
 
 function updateBuildingCombat(sim: SimulationState, config: GameConfig, building: BuildingState) {
@@ -1008,17 +1176,18 @@ function updateBuildingCombat(sim: SimulationState, config: GameConfig, building
     return;
   }
 
-  const targetId = findNearestEnemyTarget(
+  const target = findNearestEnemyTarget(
     sim,
     config,
     building.ownerId,
     centerOfBuilding(building, config),
     buildingConfig.attackRange,
+    buildingConfig.attackRange,
     true,
   );
 
-  if (targetId) {
-    applyDamage(sim, config, buildingConfig, targetId);
+  if (target) {
+    applyDamage(sim, config, buildingConfig, target.id);
     building.cooldownRemaining = buildingConfig.attackCooldown;
   }
 }
@@ -1337,9 +1506,12 @@ export function stepSimulation(
     payoutIncome(state.sim, config);
 
     cleanupDestroyed(state.sim);
+    pruneUnitNavigationState(state.sim);
 
     if (state.sim.tick % config.ai.thinkInterval === 0) {
-      runAiTurn(state, config, 'enemy');
+      config.ai.automatedPlayers.forEach((playerId) => {
+        runAiTurn(state, config, playerId);
+      });
     }
 
     checkLossCondition(state.sim, config);
