@@ -64,6 +64,25 @@ describe('simulation', () => {
     expect(state.sim.players.player.incomePerSecond).toBeGreaterThanOrEqual(0);
   });
 
+  it('keeps every starting courier earning credits without manual orders', () => {
+    const config: GameConfig = {
+      ...defaultGameConfig,
+      ai: {
+        ...defaultGameConfig.ai,
+        automatedPlayers: [],
+      },
+    };
+
+    config.map.spawns.forEach((spawn) => {
+      const state = createInitialGameState(config);
+      const initialResources = state.sim.players[spawn.playerId].resources;
+      stepSimulation(state, config, 200);
+
+      const player = state.sim.players[spawn.playerId];
+      expect(player.resources + player.pendingIncome).toBeGreaterThan(initialResources + 100);
+    });
+  });
+
   it('buffers refinery income and credits it on second boundaries', () => {
     const state = createInitialGameState(defaultGameConfig);
     const playerCourier = Object.values(state.sim.units).find(

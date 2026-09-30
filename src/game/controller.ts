@@ -1,9 +1,10 @@
-import { canPlayerBuild, canPlayerProduce, defaultGameConfig, getBuildingConfig, getPlayerBuildings, getPlayerUnits, getUnitConfig } from './config';
+import { canPlayerBuild, canPlayerProduce, defaultGameConfig, getBuildingConfig, getPlayerBuildings, getPlayerSlot, getPlayerUnits, getUnitConfig } from './config';
 import { createInitialGameState, getBuildPlacementStatus, getSelectionSummary, issueCommand, stepSimulation } from './simulation';
 import type {
   BuildingState,
   Command,
   CommandMode,
+  FactionId,
   GameConfig,
   GameState,
   GridPoint,
@@ -14,13 +15,29 @@ import type {
   UnitState,
 } from './types';
 
+export interface HudIcon {
+  kind: 'unit' | 'building';
+  id: string;
+  factionId: FactionId;
+  slot: number;
+}
+
 export interface HudAction {
   id: string;
   label: string;
   cost: number;
-  imagePath: string | null;
+  icon: HudIcon;
+  hotkey: string;
   disabled: boolean;
+  /** Why the action is unavailable, shown as a tooltip. */
+  reason: string | null;
   active: boolean;
+}
+
+export interface SelectionGroup {
+  icon: HudIcon;
+  name: string;
+  count: number;
 }
 
 export interface ArmyEntry {
@@ -56,6 +73,9 @@ export interface HudModel {
   selectionDetail: string;
   selectionTarget: string | null;
   selectionCombatDetail: string | null;
+  selectionIcon: HudIcon | null;
+  selectionHpRatio: number | null;
+  selectionGroups: SelectionGroup[];
   buildActions: HudAction[];
   trainActions: HudAction[];
   armyOverview: ArmyEntry[];
@@ -368,6 +388,7 @@ export class BattleSession {
     const opponentIds = allPlayers.map((entry) => entry.id).filter((id) => id !== player.id);
     const enemyResources = opponentIds.reduce((sum, id) => sum + (this.state.sim.players[id]?.resources ?? 0), 0);
     const faction = this.config.factions[player.factionId];
+    const slot = getPlayerSlot(this.config, player.id);
     const economy = buildEconomySnapshot(this.state, this.config, player.id);
     const selectedBuilding =
       selection.buildings.length === 1 && selection.units.length === 0 ? selection.buildings[0] : null;
@@ -396,22 +417,34 @@ export class BattleSession {
       selectionDetail: describeSelectionDetail(selection, this.config),
       selectionTarget: describeSelectionTarget(this.state, this.config, selection),
       selectionCombatDetail: describeSelectionCombat(this.state, this.config, selection),
+      selectionIcon: describeSelectionIcon(this.config, selection),
+      selectionHpRatio: describeSelectionHp(this.config, selection),
+      selectionGroups: describeSelectionGroups(this.config, selection),
       buildActions: faction.availableBuildingIds
         .filter((buildingTypeId) => buildingTypeId !== 'command-core')
-        .map((buildingTypeId) => {
+        .map((buildingTypeId, index) => {
           const buildingConfig = getBuildingConfig(this.config, player.factionId, buildingTypeId);
+          const techMet = canPlayerBuild(this.config, player.id, player.factionId, this.state.sim.buildings, buildingTypeId);
+          const affordable = player.resources >= buildingConfig.cost;
+          const missing = (buildingConfig.requiresBuildingIds ?? [])
+            .map((requiredId) => this.config.buildings[requiredId]?.name ?? requiredId)
+            .join(', ');
           return {
             id: buildingTypeId,
             label: buildingConfig.name,
             cost: buildingConfig.cost,
-            imagePath: buildingConfig.image?.path ?? null,
-            disabled:
-              !canPlayerBuild(this.config, player.id, player.factionId, this.state.sim.buildings, buildingTypeId) ||
-              player.resources < buildingConfig.cost,
+            icon: { kind: 'building' as const, id: buildingTypeId, factionId: player.factionId, slot },
+            hotkey: BUILD_HOTKEYS[index] ?? '',
+            disabled: !techMet || !affordable,
+            reason: !techMet
+              ? `Needs ${missing || 'more tech'}`
+              : !affordable
+                ? `Need ${buildingConfig.cost - player.resources} more credits`
+                : null,
             active: this.state.render.placementPreview?.buildingTypeId === buildingTypeId,
           };
         }),
-      trainActions: selectedBuilding ? getTrainActions(this.config, player.factionId, selectedBuilding, player.resources) : [],
+      trainActions: selectedBuilding ? getTrainActions(this.config, player.factionId, selectedBuilding, player.resources, slot) : [],
       armyOverview: buildArmyOverview(this.state, this.config, [player.id]),
       enemyArmyOverview: buildArmyOverview(this.state, this.config, opponentIds),
       productionQueues: buildProductionQueues(this.state, this.config, player.id),
@@ -425,6 +458,9 @@ export class BattleSession {
     return model;
   }
 }
+
+const BUILD_HOTKEYS = ['Q', 'W', 'E', 'R', 'T'];
+const TRAIN_HOTKEYS = ['Z', 'X', 'V', 'B'];
 
 function distance(a: { x: number; y: number }, b: { x: number; y: number }) {
   return Math.hypot(a.x - b.x, a.y - b.y);
@@ -495,7 +531,7 @@ function buildEconomySnapshot(state: GameState, config: GameConfig, playerId: Pl
   };
 }
 
-function getModeLabel(mode: CommandMode, preview: PlacementPreview | null, config: GameConfig, factionId: string): string {
+function getModeLabel(mode: CommandMode, preview: PlacementPreview | null, config: GameConfig, factionId: FactionId): string {
   if (mode === 'attack-move') {
     return 'Attack-move';
   }
@@ -510,7 +546,7 @@ function getModeLabel(mode: CommandMode, preview: PlacementPreview | null, confi
 
 function getModeHint(mode: CommandMode, preview: PlacementPreview | null): string | null {
   if (mode === 'attack-move') {
-    return 'Right-click to commit · Esc to cancel';
+    return 'Click to attack-move · Esc to cancel';
   }
 
   if (mode === 'build' && preview) {
@@ -716,20 +752,100 @@ function getTrainActions(
   factionId: BuildingState['factionId'],
   building: BuildingState,
   resources: number,
-) {
+  slot: number,
+): HudAction[] {
   const buildingConfig = getBuildingConfig(config, factionId, building.buildingTypeId);
 
   return (buildingConfig.producesUnitIds ?? [])
     .filter((unitTypeId) => canPlayerProduce(config, factionId, building.buildingTypeId, unitTypeId))
-    .map((unitTypeId) => {
+    .map((unitTypeId, index) => {
       const unitConfig = getUnitConfig(config, factionId, unitTypeId);
+      const underConstruction = building.constructionRemaining > 0;
+      const affordable = resources >= unitConfig.cost;
       return {
         id: unitTypeId,
         label: unitConfig.name,
         cost: unitConfig.cost,
-        imagePath: unitConfig.image?.path ?? null,
-        disabled: building.constructionRemaining > 0 || resources < unitConfig.cost,
+        icon: { kind: 'unit' as const, id: unitTypeId, factionId, slot },
+        hotkey: TRAIN_HOTKEYS[index] ?? '',
+        disabled: underConstruction || !affordable,
+        reason: underConstruction
+          ? 'Still under construction'
+          : !affordable
+            ? `Need ${unitConfig.cost - resources} more credits`
+            : null,
         active: false,
       };
     });
+}
+
+function describeSelectionIcon(config: GameConfig, selection: SelectionSummary): HudIcon | null {
+  if (selection.units.length > 0 && selection.buildings.length === 0) {
+    const unit = selection.units[0];
+    return { kind: 'unit', id: unit.unitTypeId, factionId: unit.factionId, slot: getPlayerSlot(config, unit.ownerId) };
+  }
+
+  if (selection.buildings.length > 0 && selection.units.length === 0) {
+    const building = selection.buildings[0];
+    return {
+      kind: 'building',
+      id: building.buildingTypeId,
+      factionId: building.factionId,
+      slot: getPlayerSlot(config, building.ownerId),
+    };
+  }
+
+  return null;
+}
+
+function describeSelectionHp(config: GameConfig, selection: SelectionSummary): number | null {
+  let hp = 0;
+  let maxHp = 0;
+  selection.units.forEach((unit) => {
+    hp += Math.max(0, unit.hp);
+    maxHp += getUnitConfig(config, unit.factionId, unit.unitTypeId).maxHp;
+  });
+  selection.buildings.forEach((building) => {
+    hp += Math.max(0, building.hp);
+    maxHp += getBuildingConfig(config, building.factionId, building.buildingTypeId).maxHp;
+  });
+
+  return maxHp > 0 ? Math.min(1, hp / maxHp) : null;
+}
+
+function describeSelectionGroups(config: GameConfig, selection: SelectionSummary): SelectionGroup[] {
+  const groups = new Map<string, SelectionGroup>();
+  selection.units.forEach((unit) => {
+    const key = `unit:${unit.unitTypeId}:${unit.ownerId}`;
+    const existing = groups.get(key);
+    if (existing) {
+      existing.count += 1;
+      return;
+    }
+    groups.set(key, {
+      icon: { kind: 'unit', id: unit.unitTypeId, factionId: unit.factionId, slot: getPlayerSlot(config, unit.ownerId) },
+      name: getUnitConfig(config, unit.factionId, unit.unitTypeId).name,
+      count: 1,
+    });
+  });
+  selection.buildings.forEach((building) => {
+    const key = `building:${building.buildingTypeId}:${building.ownerId}`;
+    const existing = groups.get(key);
+    if (existing) {
+      existing.count += 1;
+      return;
+    }
+    groups.set(key, {
+      icon: {
+        kind: 'building',
+        id: building.buildingTypeId,
+        factionId: building.factionId,
+        slot: getPlayerSlot(config, building.ownerId),
+      },
+      name: getBuildingConfig(config, building.factionId, building.buildingTypeId).name,
+      count: 1,
+    });
+  });
+
+  return [...groups.values()];
 }

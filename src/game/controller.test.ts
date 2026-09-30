@@ -84,8 +84,9 @@ describe('controller', () => {
     expect(model.mapName).toBe(defaultGameConfig.map.name);
     expect(model.mapSizeLabel).toBe(`${defaultGameConfig.map.width} x ${defaultGameConfig.map.height}`);
     expect(model.activeResourceNodes).toBe(defaultGameConfig.map.resourceNodes.length);
-    expect(model.modeLabel).toContain('blocked');
-    expect(model.modeLabel).toContain('Outside battlefield bounds.');
+    expect(model.modeLabel).toContain('Barracks');
+    expect(model.modeHint).toContain('Blocked');
+    expect(model.modeHint).toContain('Outside battlefield bounds.');
   });
 
   it('clears the current selection when cancel is pressed in normal mode', () => {
