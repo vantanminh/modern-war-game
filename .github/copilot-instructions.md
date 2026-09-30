@@ -20,7 +20,8 @@
 - `src/game/simulation.ts` is the authoritative game rules layer: spawning, economy, combat, build placement, production, AI behavior, and tick advancement.
 - `src/game/controller.ts` wraps the simulation in a `BattleSession`, manages selection and command modes, and derives HUD-friendly view models.
 - `src/game/pathfinding.ts` contains pure grid/path helpers used by simulation and AI.
-- `src/game/phaser/BattleScene.ts` is the Phaser adapter for rendering, camera control, selection, and translating input into session commands. Keep it focused on presentation and input.
+- `src/game/phaser/BattleScene.ts` is the Phaser adapter for rendering, camera control, selection, and translating input into session commands. Keep it focused on presentation and input. `fx.ts` holds particles/projectiles and `minimap.ts` the DOM minimap.
+- `src/game/art/` draws every sprite (units, buildings, terrain, ore, icons, title backdrop) with Canvas 2D at runtime; there are no image files. The drawers are DOM-only (no Phaser) so `main.ts` can reuse them for HUD icons. Team colour comes from the player's spawn slot (`getPlayerSlot`), hull tones from the faction.
 
 ## Conventions
 

@@ -291,6 +291,13 @@ function createBuilding(
   };
 }
 
+/** Deposits block pathing, so couriers work from an adjacent tile; measure reach to the deposit's tile centre. */
+const HARVEST_REACH = 2;
+
+function isWithinHarvestReach(unit: { x: number; y: number }, resource: ResourceNodeState) {
+  return Math.hypot(unit.x - (resource.x + 0.5), unit.y - (resource.y + 0.5)) <= HARVEST_REACH;
+}
+
 function findNearestResource(
   sim: SimulationState,
   position: { x: number; y: number },
@@ -994,7 +1001,7 @@ function updateWorkerOrder(sim: SimulationState, config: GameConfig, unit: UnitS
     }
 
     const resourcePoint = { x: Math.round(resource.x), y: Math.round(resource.y) };
-    if (distance(unit, resource) > 0.8) {
+    if (!isWithinHarvestReach(unit, resource)) {
       const blocked = getBlockedSetForTick(config, sim);
       if (shouldRefreshOrderPath(sim, config, unit.id, unit.order.path, blocked, true)) {
         retargetPath(sim, config, unit, resourcePoint);
